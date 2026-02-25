@@ -431,17 +431,17 @@
 
 ### S2-1: Python 환경 + requirements.txt
 
-- [ ] `requirements.txt`:
+- [x] `requirements.txt`:
   ```
   fastapi>=0.110.0
   uvicorn[standard]>=0.29.0
   pypandoc-hwpx>=0.1.0
   python-multipart>=0.0.9
   ```
-- [ ] `pip install -r requirements.txt`
-- [ ] Pandoc 설치 확인: `pandoc --version`
-- [ ] `templates/default.hwpx` 파일 준비 (실제 한글 문서 복사)
-- [ ] pypandoc-hwpx 동작 확인:
+- [x] `pip install -r requirements.txt`
+- [x] Pandoc 설치 확인: `pandoc --version`
+- [x] `templates/default.hwpx` 파일 준비 (실제 한글 문서 복사)
+- [x] pypandoc-hwpx 동작 확인:
   ```bash
   echo "# 테스트" > test.md
   pypandoc-hwpx test.md --reference-doc=templates/default.hwpx -o test.hwpx
@@ -451,49 +451,49 @@
 
 ### S2-2: FastAPI 기본 구조
 
-- [ ] `server.py` 기본 구조 작성 (CLAUDE.md 참조)
-- [ ] CORS 설정 (`allow_origins=["*"]`)
-- [ ] `GET /api/health` → `{"status": "ok", "pandoc": true/false}`
-- [ ] `python server.py` 실행 → `http://localhost:8000/docs` 확인
-- [ ] 브라우저에서 index.html 열어 상태바 인디케이터 녹색 확인
+- [x] `server.py` 기본 구조 작성 (CLAUDE.md 참조)
+- [x] CORS 설정 (`allow_origins=["*"]`)
+- [x] `GET /api/health` → `{"status": "ok", "pandoc": true/false}`
+- [x] `python server.py` 실행 → `http://localhost:8000/docs` 확인
+- [x] 브라우저에서 index.html 열어 상태바 인디케이터 녹색 확인
 
 ---
 
 ### S2-3: 템플릿 API
 
-- [ ] `GET /api/templates` → `{"templates": ["default.hwpx", ...]}`
-- [ ] `POST /api/templates/upload` → .hwpx 파일 수신 → 저장
-- [ ] `DELETE /api/templates/{filename}` → 삭제 (default.hwpx 보호)
-- [ ] 브라우저 HWPX 템플릿 드롭다운 연동 확인
+- [x] `GET /api/templates` → `{"templates": ["default.hwpx", ...]}`
+- [x] `POST /api/templates/upload` → .hwpx 파일 수신 → 저장
+- [x] `DELETE /api/templates/{filename}` → 삭제 (default.hwpx 보호)
+- [x] 브라우저 HWPX 템플릿 드롭다운 연동 확인
 
 ---
 
 ### S2-4: HWPX 변환 핵심 API
 
-- [ ] `POST /api/convert/hwpx` 구현 (CLAUDE.md 코드 참조)
-  - [ ] frontmatter metadata → `--metadata` 옵션 변환
-  - [ ] 임시 파일 생성 → pypandoc-hwpx 실행 → 반환
-  - [ ] Pandoc 미설치 에러 처리
-  - [ ] 변환 실패 에러 처리 (stderr 포함)
-  - [ ] 임시 파일 정리
+- [x] `POST /api/convert/hwpx` 구현 (CLAUDE.md 코드 참조)
+  - [x] frontmatter metadata → `--metadata` 옵션 변환
+  - [x] 임시 파일 생성 → pypandoc-hwpx 실행 → 반환
+  - [x] Pandoc 미설치 에러 처리
+  - [x] 변환 실패 에러 처리 (stderr 포함)
+  - [x] 임시 파일 정리
 
-- [ ] **변환 품질 테스트** (한/글에서 직접 열어 확인):
-  - [ ] 제목 (h1~h3) 스타일 적용
-  - [ ] 표 테두리 스타일
-  - [ ] 목록 (ul, ol)
-  - [ ] 굵게/기울임
-  - [ ] frontmatter title/author 메타데이터 반영
+- [x] **변환 품질 테스트** (한/글에서 직접 열어 확인):
+  - [x] 제목 (h1~h3) 스타일 적용
+  - [x] 표 테두리 스타일
+  - [x] 목록 (ul, ol)
+  - [x] 굵게/기울임
+  - [x] frontmatter title/author 메타데이터 반영
 
 ---
 
 ### S2-5: 브라우저 ↔ 서버 통합 테스트
 
-- [ ] **시나리오 H**: 서버 실행 → 템플릿 목록 자동 로드
-- [ ] **시나리오 I**: YAML frontmatter 작성 → HWPX 변환 → 한/글에서 열기
-  - [ ] 메타데이터(title, author) 반영 확인
-  - [ ] 본문 서식 확인
-- [ ] **시나리오 J**: 새 템플릿 업로드 → 선택 → 변환 → 스타일 차이 확인
-- [ ] **시나리오 K**: 서버 실행 중 Stage 1 기능 모두 정상 동작 확인
+- [x] **시나리오 H**: 서버 실행 → 템플릿 목록 자동 로드
+- [x] **시나리오 I**: YAML frontmatter 작성 → HWPX 변환 → 한/글에서 열기
+  - [x] 메타데이터(title, author) 반영 확인
+  - [x] 본문 서식 확인
+- [x] **시나리오 J**: 새 템플릿 업로드 → 선택 → 변환 → 스타일 차이 확인
+- [x] **시나리오 K**: 서버 실행 중 Stage 1 기능 모두 정상 동작 확인
 
 ---
 

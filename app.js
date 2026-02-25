@@ -43,7 +43,10 @@ console.log('code block')
 
   const debounce = (fn, ms = 300) => {
     let t;
-    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), ms);
+    };
   };
 
   const showToast = (msg, type = 'info') => {
@@ -100,6 +103,47 @@ console.log('code block')
     window.updatePreview(state.markdown, state.settings);
   };
 
+  const loadTemplates = async () => {
+    const sel = document.getElementById('set-template');
+    if (!sel) return;
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/templates');
+      const json = await res.json();
+      const templates = json.templates || [];
+      sel.innerHTML = templates.length
+        ? templates.map((t) => `<option value="${t}">${t}</option>`).join('')
+        : '<option value="">서버 없음</option>';
+      if (templates.includes('default.hwpx')) sel.value = 'default.hwpx';
+    } catch {
+      sel.innerHTML = '<option value="">서버 없음</option>';
+    }
+  };
+
+  const checkServer = async () => {
+    const c = new AbortController();
+    const timer = setTimeout(() => c.abort(), 2000);
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/health', { signal: c.signal });
+      const json = await res.json();
+      if (json.status === 'ok' && json.pandoc) {
+        statusRight.textContent = '● 서버 online (Pandoc OK)';
+        statusRight.dataset.state = 'online';
+        document.getElementById('btn-export-hwpx').disabled = false;
+      } else {
+        statusRight.textContent = '● 서버 warn (Pandoc 없음)';
+        statusRight.dataset.state = 'warn';
+        document.getElementById('btn-export-hwpx').disabled = true;
+      }
+    } catch {
+      statusRight.textContent = '● 서버 없음';
+      statusRight.dataset.state = 'offline';
+      document.getElementById('btn-export-hwpx').disabled = true;
+    } finally {
+      clearTimeout(timer);
+      await loadTemplates();
+    }
+  };
+
   const openFile = async () => {
     try {
       if (window.showOpenFilePicker) {
@@ -108,6 +152,8 @@ console.log('code block')
         state.fileHandle = handle;
         state.filename = file.name;
         state.markdown = await file.text();
+        editorEl.value = state.markdown;
+        repaint();
       } else {
         const input = document.createElement('input');
         input.type = 'file';
@@ -121,10 +167,7 @@ console.log('code block')
           repaint();
         };
         input.click();
-        return;
       }
-      editorEl.value = state.markdown;
-      repaint();
       showToast('파일 열기 완료', 'success');
     } catch {
       showToast('파일 열기 취소/실패', 'warn');
@@ -156,27 +199,51 @@ console.log('code block')
     }
   };
 
-  const checkServer = async () => {
-    const c = new AbortController();
-    const timer = setTimeout(() => c.abort(), 2000);
+  const exportHWPX = async () => {
+    const btn = document.getElementById('btn-export-hwpx');
+    const template = document.getElementById('set-template')?.value || 'default.hwpx';
+    if (btn.disabled) {
+      showToast('서버를 먼저 실행하세요: python server.py', 'warn');
+      return;
+    }
+
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/health', { signal: c.signal });
-      const json = await res.json();
-      if (json.status === 'ok' && json.pandoc) {
-        statusRight.textContent = '● 서버 online (Pandoc OK)';
-        statusRight.dataset.state = 'online';
-        document.getElementById('btn-export-hwpx').disabled = false;
-      } else {
-        statusRight.textContent = '● 서버 warn (Pandoc 없음)';
-        statusRight.dataset.state = 'warn';
-        document.getElementById('btn-export-hwpx').disabled = true;
+      const fm = window.parseFrontmatter(state.markdown) || {};
+      const res = await fetch('http://127.0.0.1:8000/api/convert/hwpx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          md_content: state.markdown,
+          template,
+          filename: state.filename.replace(/\.[^/.]+$/, ''),
+          metadata: {
+            title: fm.title || '',
+            author: fm.author || '',
+            date: fm.date || '',
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        let msg = 'HWPX 변환 실패';
+        try {
+          const data = await res.json();
+          msg = data.detail || msg;
+        } catch {
+          // ignore
+        }
+        throw new Error(msg);
       }
-    } catch {
-      statusRight.textContent = '● 서버 없음';
-      statusRight.dataset.state = 'offline';
-      document.getElementById('btn-export-hwpx').disabled = true;
-    } finally {
-      clearTimeout(timer);
+
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${state.filename.replace(/\.[^/.]+$/, '')}.hwpx`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showToast('HWPX 변환 완료', 'success');
+    } catch (e) {
+      showToast(e.message || 'HWPX 변환 실패', 'error');
     }
   };
 
@@ -196,10 +263,12 @@ console.log('code block')
     window.renderSettingsPanel(state.settings, onSettingChange, applyPreset, savePreset, deletePreset);
     showToast(`프리셋 적용: ${preset.name}`, 'info');
   };
+
   const savePreset = (name) => {
     window.saveCurrentAsPreset(name, window.deepClone(state.settings));
     showToast('프리셋 저장 완료', 'success');
   };
+
   const deletePreset = (id) => {
     window.deletePreset(id);
     showToast('프리셋 삭제 완료', 'info');
@@ -212,9 +281,14 @@ console.log('code block')
   themeToggle.addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   document.querySelectorAll('.view-mode-group .tool-btn').forEach((btn) => btn.addEventListener('click', () => setViewMode(btn.dataset.view)));
 
-  document.getElementById('btn-new').addEventListener('click', () => { editorEl.value = SAMPLE_MD; onTextChanged(); showToast('새 문서 생성', 'info'); });
+  document.getElementById('btn-new').addEventListener('click', () => {
+    editorEl.value = SAMPLE_MD;
+    onTextChanged();
+    showToast('새 문서 생성', 'info');
+  });
   document.getElementById('btn-open').addEventListener('click', openFile);
   document.getElementById('btn-save').addEventListener('click', saveFile);
+  document.getElementById('btn-export-hwpx').addEventListener('click', exportHWPX);
 
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); }
@@ -225,12 +299,14 @@ console.log('code block')
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'h') { e.preventDefault(); window.exportHTMLWeb({ markdown: state.markdown, settings: state.settings, filename: state.filename }); }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'k') { e.preventDefault(); window.exportHTMLforHWP({ markdown: state.markdown, settings: state.settings, filename: state.filename }); }
     if (e.ctrlKey && e.key.toLowerCase() === 'p') { e.preventDefault(); window.exportPDF(); }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); exportHWPX(); }
   });
 
   editorEl.value = state.markdown;
   setTheme(localStorage.getItem('mdhwpx.theme') || 'light');
   setViewMode('split');
   repaint();
+  loadTemplates();
   checkServer();
   setInterval(checkServer, 5000);
 })();
