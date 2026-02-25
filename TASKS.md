@@ -13,7 +13,7 @@
 
 **목표**: 빈 골격을 열었을 때 3패널(에디터/프리뷰/설정) 레이아웃이 보임
 
-- [ ] 디렉토리 생성
+- [x] 디렉토리 생성
   ```
   md-hwpx-studio/
   ├── index.html
@@ -26,11 +26,11 @@
   └── presets.js
   ```
 
-- [ ] `index.html` 기본 골격
-  - [ ] marked.js CDN (`cdn.jsdelivr.net/npm/marked/marked.min.js`)
-  - [ ] highlight.js CDN (코드 하이라이트)
-  - [ ] 모든 .js 파일 `<script>` 링크
-  - [ ] `style.css` 링크
+- [x] `index.html` 기본 골격
+  - [x] marked.js CDN (`cdn.jsdelivr.net/npm/marked/marked.min.js`)
+  - [x] highlight.js CDN (코드 하이라이트)
+  - [x] 모든 .js 파일 `<script>` 링크
+  - [x] `style.css` 링크
   - [ ] 구조:
     ```html
     <div id="app">
@@ -52,16 +52,16 @@
     </div>
     ```
 
-- [ ] `style.css` 레이아웃 구현
-  - [ ] `--wp-*` CSS 변수 정의 (라이트/다크)
-  - [ ] titlebar: 고정 높이 36px, `--wp-titlebar` 배경
-  - [ ] toolbar: 고정 높이 48px, `--wp-chrome` 배경
-  - [ ] workspace: `flex: 1`, `display: flex`, `overflow: hidden`
-  - [ ] editor-panel: `flex: 1`, 에디터 + 라인번호 나란히
-  - [ ] preview-panel: `flex: 1`, 회색 배경(`--wp-bg`), 스크롤
-  - [ ] settings-panel: 고정 `width: 240px`, 스크롤
-  - [ ] statusbar: 고정 높이 24px, 작은 텍스트
-  - [ ] A4 iframe: `width: 210mm; min-height: 297mm; background: #fff`
+- [x] `style.css` 레이아웃 구현
+  - [x] `--wp-*` CSS 변수 정의 (라이트/다크)
+  - [x] titlebar: 고정 높이 36px, `--wp-titlebar` 배경
+  - [x] toolbar: 고정 높이 48px, `--wp-chrome` 배경
+  - [x] workspace: `flex: 1`, `display: flex`, `overflow: hidden`
+  - [x] editor-panel: `flex: 1`, 에디터 + 라인번호 나란히
+  - [x] preview-panel: `flex: 1`, 회색 배경(`--wp-bg`), 스크롤
+  - [x] settings-panel: 고정 `width: 240px`, 스크롤
+  - [x] statusbar: 고정 높이 24px, 작은 텍스트
+  - [x] A4 iframe: `width: 210mm; min-height: 297mm; background: #fff`
     ```css
     #preview-bg {
         background: var(--wp-bg);
@@ -79,7 +79,7 @@
     }
     ```
 
-- [ ] 브라우저에서 `index.html` 열어 3패널 레이아웃 확인
+- [x] 브라우저에서 `index.html` 열어 3패널 레이아웃 확인
 
 ---
 

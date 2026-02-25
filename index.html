@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MD-HWPX Studio</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="titlebar">
+      <div class="app-name">MD-HWPX Studio</div>
+      <button id="theme-toggle" class="title-action" type="button" aria-label="테마 전환">🌙</button>
+    </div>
+
+    <div id="toolbar">
+      <div class="tool-group">
+        <button class="tool-btn" id="btn-new">새문서</button>
+        <button class="tool-btn" id="btn-open">열기</button>
+        <button class="tool-btn" id="btn-save">저장</button>
+      </div>
+      <div class="tool-divider"></div>
+      <div class="tool-group">
+        <button class="tool-btn" id="btn-export-web">HTML웹↓</button>
+        <button class="tool-btn" id="btn-export-hangul">HTML한글↓</button>
+        <button class="tool-btn" id="btn-export-pdf">PDF↓</button>
+        <button class="tool-btn" id="btn-export-hwpx" disabled>HWPX↓</button>
+      </div>
+      <div class="tool-divider"></div>
+      <div class="tool-group">
+        <button class="tool-btn">표▼</button>
+        <button class="tool-btn">이미지</button>
+      </div>
+      <div class="tool-divider"></div>
+      <div class="tool-group view-mode-group">
+        <button class="tool-btn is-active" data-view="edit">편집</button>
+        <button class="tool-btn" data-view="split">분할</button>
+        <button class="tool-btn" data-view="preview">미리보기</button>
+      </div>
+      <div class="tool-divider"></div>
+      <div class="tool-group">
+        <button class="tool-btn">프리셋▼</button>
+        <button class="tool-btn">도움말</button>
+      </div>
+    </div>
+
+    <div id="workspace">
+      <div id="editor-panel">
+        <div id="find-bar" class="hidden">
+          <input id="find-input" type="text" placeholder="찾기 (Enter: 다음, Shift+Enter: 이전, Esc: 닫기)" />
+          <span id="find-count">0/0</span>
+          <button id="find-close" type="button">✕</button>
+        </div>
+        <div id="editor-wrap">
+          <div id="line-numbers"></div>
+          <textarea id="editor" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div id="preview-panel">
+        <div id="preview-bg">
+          <iframe id="preview-iframe" title="A4 preview"></iframe>
+        </div>
+      </div>
+
+      <aside id="settings-panel"></aside>
+    </div>
+
+    <div id="statusbar">
+      <div id="status-left">줄 1, 열 1 | 1줄 | 0자 | Markdown</div>
+      <div id="status-right">● 서버 없음</div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <script src="settings.js"></script>
+  <script src="presets.js"></script>
+  <script src="preview.js"></script>
+  <script src="editor.js"></script>
+  <script src="export.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
