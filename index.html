@@ -16,32 +16,32 @@
 
     <div id="toolbar">
       <div class="tool-group">
-        <button class="tool-btn" id="btn-new">새문서</button>
-        <button class="tool-btn" id="btn-open">열기</button>
-        <button class="tool-btn" id="btn-save">저장</button>
+        <button class="tool-btn" id="btn-new"><span>📄</span><small>새문서</small></button>
+        <button class="tool-btn" id="btn-open"><span>📂</span><small>열기</small></button>
+        <button class="tool-btn" id="btn-save"><span>💾</span><small>저장</small></button>
       </div>
       <div class="tool-divider"></div>
       <div class="tool-group">
-        <button class="tool-btn" id="btn-export-web">HTML웹↓</button>
-        <button class="tool-btn" id="btn-export-hangul">HTML한글↓</button>
-        <button class="tool-btn" id="btn-export-pdf">PDF↓</button>
-        <button class="tool-btn" id="btn-export-hwpx" disabled>HWPX↓</button>
+        <button class="tool-btn" id="btn-export-web"><span>🌐</span><small>HTML웹↓</small></button>
+        <button class="tool-btn" id="btn-export-hangul"><span>📝</span><small>HTML한글↓</small></button>
+        <button class="tool-btn" id="btn-export-pdf"><span>📕</span><small>PDF↓</small></button>
+        <button class="tool-btn" id="btn-export-hwpx" disabled><span>📘</span><small>HWPX↓</small></button>
       </div>
       <div class="tool-divider"></div>
       <div class="tool-group">
-        <button class="tool-btn">표▼</button>
-        <button class="tool-btn">이미지</button>
+        <button class="tool-btn"><span>▦</span><small>표▼</small></button>
+        <button class="tool-btn"><span>🖼</span><small>이미지</small></button>
       </div>
       <div class="tool-divider"></div>
       <div class="tool-group view-mode-group">
-        <button class="tool-btn is-active" data-view="edit">편집</button>
-        <button class="tool-btn" data-view="split">분할</button>
-        <button class="tool-btn" data-view="preview">미리보기</button>
+        <button class="tool-btn is-active" data-view="edit"><span>✏️</span><small>편집</small></button>
+        <button class="tool-btn" data-view="split"><span>↔️</span><small>분할</small></button>
+        <button class="tool-btn" data-view="preview"><span>👁</span><small>미리보기</small></button>
       </div>
       <div class="tool-divider"></div>
       <div class="tool-group">
-        <button class="tool-btn">프리셋▼</button>
-        <button class="tool-btn">도움말</button>
+        <button class="tool-btn"><span>🎚</span><small>프리셋▼</small></button>
+        <button class="tool-btn"><span>❓</span><small>도움말</small></button>
       </div>
     </div>
 
@@ -72,6 +72,7 @@
       <div id="status-right">● 서버 없음</div>
     </div>
   </div>
+  <div id="toast-host"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
