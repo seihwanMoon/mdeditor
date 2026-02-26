@@ -18,6 +18,25 @@ window.stripFrontmatter = function stripFrontmatter(markdown) {
   return markdown.replace(/^---\n[\s\S]*?\n---\n?/, '');
 };
 
+window.resolveMarkdownAssets = function resolveMarkdownAssets(markdown, assets = {}) {
+  if (!markdown || !assets || typeof assets !== 'object') return markdown || '';
+  return markdown.replace(/asset:\/\/([a-zA-Z0-9_-]+)/g, (full, id) => {
+    const item = assets[id];
+    if (!item) return full;
+    if (typeof item === 'string') return item;
+    if (typeof item === 'object' && typeof item.dataUrl === 'string') return item.dataUrl;
+    return full;
+  });
+};
+
+window.applyImageSizeSyntax = function applyImageSizeSyntax(markdown) {
+  if (!markdown) return markdown || '';
+  return markdown.replace(
+    /!\[([^\]\n|]+)\|(\d{1,4})\]\(([^)\n]+)\)/g,
+    (full, alt, width, src) => `<img src="${src}" alt="${alt}" width="${width}" style="max-width:100%;height:auto;" />`,
+  );
+};
+
 window.buildFrontmatterHeader = function buildFrontmatterHeader(fm) {
   const title = fm?.title ? `<h1>${fm.title}</h1>` : '';
   const subtitle = fm?.subtitle ? `<p><strong>${fm.subtitle}</strong></p>` : '';
@@ -70,6 +89,7 @@ window.buildIframeDoc = function buildIframeDoc(html, settings) {
     ${buildTableCss(settings.tableStyle)}
     ${buildHeadingCss(settings.headingStyle)}
     ${buildPageBreakCss(settings)}
+    img{max-width:100%;height:auto;}
     pre{background:#f5f5f5;padding:12px;border-radius:4px;overflow-x:auto;}blockquote{border-left:3px solid #ccc;padding-left:16px;color:#555;}
     @media print { body { margin:0; padding:0; } }
   </style></head><body>${html}</body></html>`;
@@ -77,8 +97,29 @@ window.buildIframeDoc = function buildIframeDoc(html, settings) {
 
 window.updatePreview = function updatePreview(markdown, settings) {
   const fm = parseFrontmatter(markdown);
-  const md = stripFrontmatter(markdown);
+  const resolved = window.resolveMarkdownAssets(markdown, window.getAssetMap ? window.getAssetMap() : {});
+  const sized = window.applyImageSizeSyntax(resolved);
+  const md = stripFrontmatter(sized);
   const html = marked.parse(md, { breaks: settings.breaks, gfm: true });
   const withHeader = (fm ? buildFrontmatterHeader(fm) : '') + html;
-  document.getElementById('preview-iframe').srcdoc = window.buildIframeDoc(withHeader, settings);
+  const iframe = document.getElementById('preview-iframe');
+  iframe.srcdoc = window.buildIframeDoc(withHeader, settings);
+  iframe.onload = () => {
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      const resize = () => {
+        const bodyHeight = Math.max(
+          doc.body ? doc.body.scrollHeight : 0,
+          doc.documentElement ? doc.documentElement.scrollHeight : 0,
+          1122,
+        );
+        iframe.style.height = `${bodyHeight + 8}px`;
+      };
+      resize();
+      doc.querySelectorAll('img').forEach((img) => img.addEventListener('load', resize, { once: true }));
+    } catch {
+      // ignore cross-context failures
+    }
+  };
 };

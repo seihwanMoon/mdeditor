@@ -28,18 +28,78 @@ console.log('code block')
 `;
 
 (function initApp() {
+  const appEl = document.getElementById('app');
+  const workspaceEl = document.getElementById('workspace');
   const editorEl = document.getElementById('editor');
+  const editorPanelEl = document.getElementById('editor-panel');
+  const previewPanelEl = document.getElementById('preview-panel');
+  const previewBgEl = document.getElementById('preview-bg');
+  const splitterEl = document.getElementById('panel-splitter');
+  const settingsPanelEl = document.getElementById('settings-panel');
   const statusLeft = document.getElementById('status-left');
   const statusRight = document.getElementById('status-right');
   const themeToggle = document.getElementById('theme-toggle');
+  const settingsToggleBtn = document.getElementById('btn-toggle-settings');
 
   const state = {
     markdown: localStorage.getItem('md-hwpx-content') || SAMPLE_MD,
     settings: Object.assign(window.deepClone(window.defaultSettings), JSON.parse(localStorage.getItem('mdhwpx.settings') || '{}')),
-    viewMode: 'split',
+    viewMode: localStorage.getItem('mdhwpx.viewMode') || 'split',
     filename: 'document.md',
     fileHandle: null,
+    settingsPanelOpen: false,
+    splitRatio: Number(localStorage.getItem('mdhwpx.splitRatio') || 0.5),
+    serverState: 'checking',
+    assets: {},
   };
+
+  try {
+    state.assets = JSON.parse(localStorage.getItem('mdhwpx.assets') || '{}');
+  } catch {
+    state.assets = {};
+  }
+
+  const persistAssets = () => {
+    try {
+      localStorage.setItem('mdhwpx.assets', JSON.stringify(state.assets));
+    } catch {
+      // localStorage 용량 초과 시 세션 메모리에서만 유지
+    }
+  };
+
+  const getReferencedAssetIds = (markdown) => {
+    const ids = new Set();
+    (markdown || '').replace(/asset:\/\/([a-zA-Z0-9_-]+)/g, (_, id) => {
+      ids.add(id);
+      return _;
+    });
+    return [...ids];
+  };
+
+  const getReferencedAssetsPayload = () => {
+    const ids = getReferencedAssetIds(state.markdown);
+    const out = {};
+    ids.forEach((id) => {
+      if (state.assets[id]) out[id] = state.assets[id];
+    });
+    return out;
+  };
+
+  const pruneUnreferencedAssets = () => {
+    const ids = new Set(getReferencedAssetIds(state.markdown));
+    let changed = false;
+    Object.keys(state.assets).forEach((id) => {
+      if (!ids.has(id)) {
+        delete state.assets[id];
+        changed = true;
+      }
+    });
+    if (changed) persistAssets();
+  };
+
+  window.getAssetMap = () => state.assets;
+
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
   const debounce = (fn, ms = 300) => {
     let t;
@@ -64,11 +124,43 @@ console.log('code block')
     localStorage.setItem('mdhwpx.theme', theme);
   };
 
+  const applySplitRatio = (ratio) => {
+    state.splitRatio = clamp(Number(ratio) || 0.5, 0.2, 0.8);
+    localStorage.setItem('mdhwpx.splitRatio', String(state.splitRatio));
+    if (state.viewMode !== 'split') return;
+    editorPanelEl.style.flex = `0 0 ${(state.splitRatio * 100).toFixed(1)}%`;
+    previewPanelEl.style.flex = '1 1 auto';
+  };
+
+  const setSettingsPanelOpen = (open) => {
+    state.settingsPanelOpen = !!open;
+    appEl.dataset.settingsOpen = String(state.settingsPanelOpen);
+    settingsToggleBtn.classList.toggle('is-active', state.settingsPanelOpen);
+    localStorage.setItem('mdhwpx.settingsPanelOpen', String(state.settingsPanelOpen));
+    if (state.viewMode === 'split') applySplitRatio(state.splitRatio);
+  };
+
   const setViewMode = (mode) => {
     state.viewMode = mode;
+    localStorage.setItem('mdhwpx.viewMode', mode);
     document.querySelectorAll('.view-mode-group .tool-btn').forEach((btn) => btn.classList.toggle('is-active', btn.dataset.view === mode));
-    document.getElementById('editor-panel').style.display = mode === 'preview' ? 'none' : 'flex';
-    document.getElementById('preview-panel').style.display = mode === 'edit' ? 'none' : 'block';
+
+    if (mode === 'edit') {
+      editorPanelEl.style.display = 'flex';
+      previewPanelEl.style.display = 'none';
+      splitterEl.classList.add('is-hidden');
+      editorPanelEl.style.flex = '1 1 auto';
+    } else if (mode === 'preview') {
+      editorPanelEl.style.display = 'none';
+      previewPanelEl.style.display = 'block';
+      splitterEl.classList.add('is-hidden');
+      previewPanelEl.style.flex = '1 1 auto';
+    } else {
+      editorPanelEl.style.display = 'flex';
+      previewPanelEl.style.display = 'block';
+      splitterEl.classList.remove('is-hidden');
+      applySplitRatio(state.splitRatio);
+    }
   };
 
   const updateStatus = (autoSavedAt = '') => {
@@ -93,6 +185,7 @@ console.log('code block')
 
   const onTextChanged = () => {
     state.markdown = editorEl.value;
+    pruneUnreferencedAssets();
     repaint();
     autoSave();
   };
@@ -100,6 +193,8 @@ console.log('code block')
   const applySettings = (settings) => {
     state.settings = window.deepClone(settings);
     localStorage.setItem('mdhwpx.settings', JSON.stringify(state.settings));
+    const zoomLabel = document.getElementById('zoom-label');
+    if (zoomLabel) zoomLabel.textContent = `${Math.round((Number(state.settings.scale) || 1) * 100)}%`;
     window.updatePreview(state.markdown, state.settings);
   };
 
@@ -119,27 +214,60 @@ console.log('code block')
     }
   };
 
+  const setTemplateHint = (text) => {
+    const hintEl = document.getElementById('template-server-hint');
+    if (hintEl) hintEl.textContent = text;
+  };
+
+  const setHwpxButtons = (disabled) => {
+    document.getElementById('btn-export-hwpx').disabled = disabled;
+    const innerConvertBtn = document.getElementById('btn-convert-hwpx');
+    if (innerConvertBtn) innerConvertBtn.disabled = disabled;
+  };
+
+  const syncServerUiByState = () => {
+    if (state.serverState === 'online') {
+      setHwpxButtons(false);
+      setTemplateHint('서버 연결됨 (HWPX 변환 가능)');
+      return;
+    }
+    if (state.serverState === 'warn') {
+      setHwpxButtons(true);
+      setTemplateHint('Pandoc 미설치 또는 설정 필요');
+      return;
+    }
+    if (state.serverState === 'offline') {
+      setHwpxButtons(true);
+      setTemplateHint('python server.py 실행 필요');
+      return;
+    }
+    setHwpxButtons(true);
+    setTemplateHint('서버 상태 확인 중...');
+  };
+
   const checkServer = async () => {
     const c = new AbortController();
     const timer = setTimeout(() => c.abort(), 2000);
+
     try {
       const res = await fetch('http://127.0.0.1:8000/api/health', { signal: c.signal });
       const json = await res.json();
       if (json.status === 'ok' && json.pandoc) {
+        state.serverState = 'online';
         statusRight.textContent = '● 서버 online (Pandoc OK)';
         statusRight.dataset.state = 'online';
-        document.getElementById('btn-export-hwpx').disabled = false;
       } else {
+        state.serverState = 'warn';
         statusRight.textContent = '● 서버 warn (Pandoc 없음)';
         statusRight.dataset.state = 'warn';
-        document.getElementById('btn-export-hwpx').disabled = true;
       }
     } catch {
+      state.serverState = 'offline';
       statusRight.textContent = '● 서버 없음';
       statusRight.dataset.state = 'offline';
-      document.getElementById('btn-export-hwpx').disabled = true;
     } finally {
       clearTimeout(timer);
+      syncServerUiByState();
       await loadTemplates();
     }
   };
@@ -152,8 +280,6 @@ console.log('code block')
         state.fileHandle = handle;
         state.filename = file.name;
         state.markdown = await file.text();
-        editorEl.value = state.markdown;
-        repaint();
       } else {
         const input = document.createElement('input');
         input.type = 'file';
@@ -163,11 +289,16 @@ console.log('code block')
           if (!file) return;
           state.filename = file.name;
           state.markdown = await file.text();
+          normalizeInlineDataUrlsToAssets();
           editorEl.value = state.markdown;
           repaint();
         };
         input.click();
+        return;
       }
+      normalizeInlineDataUrlsToAssets();
+      editorEl.value = state.markdown;
+      repaint();
       showToast('파일 열기 완료', 'success');
     } catch {
       showToast('파일 열기 취소/실패', 'warn');
@@ -221,6 +352,7 @@ console.log('code block')
             author: fm.author || '',
             date: fm.date || '',
           },
+          assets: getReferencedAssetsPayload(),
         }),
       });
 
@@ -260,7 +392,7 @@ console.log('code block')
     const preset = window.loadPresets().find((p) => p.id === id);
     if (!preset) return;
     applySettings({ ...state.settings, ...preset.settings, margin: { ...state.settings.margin, ...(preset.settings.margin || {}) } });
-    window.renderSettingsPanel(state.settings, onSettingChange, applyPreset, savePreset, deletePreset);
+    renderSettingsPanel();
     showToast(`프리셋 적용: ${preset.name}`, 'info');
   };
 
@@ -274,9 +406,296 @@ console.log('code block')
     showToast('프리셋 삭제 완료', 'info');
   };
 
+  const renderSettingsPanel = () => {
+    window.renderSettingsPanel(state.settings, onSettingChange, applyPreset, savePreset, deletePreset);
+    const convertBtn = document.getElementById('btn-convert-hwpx');
+    if (convertBtn) convertBtn.addEventListener('click', exportHWPX);
+    syncServerUiByState();
+  };
+
+  const replaceSelection = (build) => {
+    const start = editorEl.selectionStart;
+    const end = editorEl.selectionEnd;
+    const selected = editorEl.value.slice(start, end);
+    const out = build(selected, start, end);
+    editorEl.setRangeText(out.text, start, end, 'end');
+    if (typeof out.selectionStart === 'number' && typeof out.selectionEnd === 'number') {
+      editorEl.setSelectionRange(out.selectionStart, out.selectionEnd);
+    }
+    editorEl.focus();
+    onTextChanged();
+  };
+
+  const wrapSelection = (before, after, fallback = '텍스트') => {
+    replaceSelection((selected, start) => {
+      const content = selected || fallback;
+      const text = `${before}${content}${after}`;
+      const contentStart = start + before.length;
+      return {
+        text,
+        selectionStart: contentStart,
+        selectionEnd: contentStart + content.length,
+      };
+    });
+  };
+
+  const replaceSelectedLines = (lineMapper) => {
+    const text = editorEl.value;
+    const start = editorEl.selectionStart;
+    const end = editorEl.selectionEnd;
+    const blockStart = text.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+    let blockEnd = text.indexOf('\n', end);
+    if (blockEnd === -1) blockEnd = text.length;
+    const block = text.slice(blockStart, blockEnd);
+    const mapped = block
+      .split('\n')
+      .map((line, idx) => lineMapper(line, idx))
+      .join('\n');
+    editorEl.setRangeText(mapped, blockStart, blockEnd, 'select');
+    editorEl.focus();
+    onTextChanged();
+  };
+
+  const insertBlock = (text) => {
+    replaceSelection((selected, start) => {
+      const out = selected ? `${selected}\n${text}` : text;
+      const cursor = start + out.length;
+      return { text: out, selectionStart: cursor, selectionEnd: cursor };
+    });
+  };
+
+  const setHeading = (level) => {
+    const prefix = `${'#'.repeat(level)} `;
+    replaceSelectedLines((line) => {
+      if (!line.trim()) return line;
+      return `${prefix}${line.replace(/^\s*#{1,6}\s+/, '')}`;
+    });
+  };
+
+  const setUnorderedList = () => {
+    replaceSelectedLines((line) => {
+      if (!line.trim()) return line;
+      return `- ${line.replace(/^\s*(?:[-*+]\s+|\d+\.\s+)/, '')}`;
+    });
+  };
+
+  const setOrderedList = () => {
+    replaceSelectedLines((line, idx) => {
+      if (!line.trim()) return line;
+      return `${idx + 1}. ${line.replace(/^\s*(?:[-*+]\s+|\d+\.\s+)/, '')}`;
+    });
+  };
+
+  const insertTable = () => {
+    insertBlock('| 항목 | 내용 |\n| --- | --- |\n| 예시1 | 값1 |\n| 예시2 | 값2 |');
+    showToast('표 마크다운을 삽입했습니다', 'success');
+  };
+
+  const createAssetId = () => `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const registerAsset = (file, dataUrl) => {
+    const id = createAssetId();
+    state.assets[id] = {
+      name: file?.name || `image-${id}.png`,
+      type: file?.type || 'image/png',
+      dataUrl,
+    };
+    persistAssets();
+    return id;
+  };
+
+  const normalizeInlineDataUrlsToAssets = () => {
+    const pattern = /!\[([^\]]*)\]\((data:image\/[-\w.+]+;base64,[A-Za-z0-9+/=\s]+)\)/g;
+    let changed = false;
+    state.markdown = state.markdown.replace(pattern, (full, alt, dataUrl) => {
+      const mime = (String(dataUrl).match(/^data:(image\/[-\w.+]+);base64,/) || [])[1] || 'image/png';
+      const ext = mime.includes('jpeg') ? 'jpg' : (mime.split('/')[1] || 'png');
+      const name = (alt && String(alt).trim()) ? String(alt).trim() : `image-${Date.now()}.${ext}`;
+      const id = registerAsset({ name, type: mime }, dataUrl);
+      changed = true;
+      return `![${alt || name}](asset://${id})`;
+    });
+    if (changed) {
+      editorEl.value = state.markdown;
+      localStorage.setItem('md-hwpx-content', state.markdown);
+      showToast('기존 base64 이미지를 내부 링크로 정리했습니다', 'info');
+    }
+  };
+
+  const insertImage = async () => {
+    const insertByPrompt = () => {
+      const url = prompt('이미지 URL 또는 경로', './image.png');
+      if (!url) return;
+      const alt = prompt('대체 텍스트', '이미지') || '이미지';
+      insertBlock(`![${alt}](${url})`);
+      showToast('이미지 마크다운을 삽입했습니다', 'success');
+    };
+
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'Images', accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'] } }],
+          excludeAcceptAllOption: false,
+          multiple: false,
+        });
+        const file = await handle.getFile();
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        const id = registerAsset(file, dataUrl);
+        const widthText = prompt('이미지 폭(px, 선택)', '');
+        const width = Number(String(widthText || '').trim());
+        const alt = (Number.isFinite(width) && width > 0)
+          ? `${file.name}|${Math.round(width)}`
+          : file.name;
+        insertBlock(`![${alt}](asset://${id})`);
+        showToast('이미지 마크다운을 삽입했습니다', 'success');
+        return;
+      } catch {
+        // fallback prompt
+      }
+    }
+    insertByPrompt();
+  };
+
+  const showPresetPicker = () => {
+    const presets = window.loadPresets();
+    if (!presets.length) {
+      showToast('사용 가능한 프리셋이 없습니다', 'warn');
+      return;
+    }
+
+    const text = presets.map((p, i) => `${i + 1}. ${p.name}`).join('\n');
+    const pick = prompt(`적용할 프리셋 번호를 입력하세요.\n\n${text}`);
+    if (!pick) return;
+    const idx = Number(pick) - 1;
+    if (!Number.isInteger(idx) || !presets[idx]) {
+      showToast('유효한 번호를 입력하세요', 'warn');
+      return;
+    }
+    applyPreset(presets[idx].id);
+    setSettingsPanelOpen(true);
+  };
+
+  const attachToolbarHandlers = () => {
+    const bind = (id, handler) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', handler);
+    };
+
+    bind('btn-fmt-bold', () => wrapSelection('**', '**'));
+    bind('btn-fmt-italic', () => wrapSelection('*', '*'));
+    bind('btn-fmt-strike', () => wrapSelection('~~', '~~'));
+    bind('btn-fmt-code', () => wrapSelection('`', '`', 'code'));
+    bind('btn-fmt-link', () => wrapSelection('[', '](https://example.com)', '링크 텍스트'));
+    bind('btn-fmt-quote', () => replaceSelectedLines((line) => (line.trim() ? `> ${line.replace(/^\s*>\s+/, '')}` : line)));
+    bind('btn-fmt-ul', setUnorderedList);
+    bind('btn-fmt-ol', setOrderedList);
+    bind('btn-fmt-h1', () => setHeading(1));
+    bind('btn-fmt-h2', () => setHeading(2));
+    bind('btn-fmt-hr', () => insertBlock('\n---\n'));
+
+    bind('btn-insert-table', insertTable);
+    bind('btn-insert-image', insertImage);
+    bind('btn-toolbar-presets', showPresetPicker);
+    bind('btn-toggle-settings', () => setSettingsPanelOpen(!state.settingsPanelOpen));
+    bind('btn-help', () => {
+      alert([
+        '주요 단축키',
+        'Ctrl+S: 저장',
+        'Ctrl+O: 열기',
+        'Ctrl+1/2/3: 편집/분할/미리보기',
+        'Ctrl+B/I: 굵게/기울임',
+        'Ctrl+Shift+W: HWPX 변환',
+      ].join('\n'));
+    });
+
+    const blockSelect = document.getElementById('fmt-block');
+    if (blockSelect) {
+      blockSelect.addEventListener('change', () => {
+        if (blockSelect.value === 'h1') setHeading(1);
+        else if (blockSelect.value === 'h2') setHeading(2);
+        else if (blockSelect.value === 'h3') setHeading(3);
+        blockSelect.value = '';
+      });
+    }
+  };
+
+  const initSplitter = () => {
+    let dragging = false;
+
+    const onMove = (e) => {
+      if (!dragging || state.viewMode !== 'split') return;
+      const rect = workspaceEl.getBoundingClientRect();
+      const settingsWidth = state.settingsPanelOpen ? settingsPanelEl.getBoundingClientRect().width : 0;
+      const usable = rect.width - settingsWidth - splitterEl.getBoundingClientRect().width;
+      if (usable < 200) return;
+      const x = e.clientX - rect.left;
+      applySplitRatio(x / usable);
+    };
+
+    const stop = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+
+    splitterEl.addEventListener('mousedown', (e) => {
+      if (state.viewMode !== 'split') return;
+      dragging = true;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('resize', () => applySplitRatio(state.splitRatio));
+  };
+
+  const initScrollSync = () => {
+    let syncingFromEditor = false;
+    let syncingFromPreview = false;
+
+    const syncToPreview = () => {
+      if (syncingFromPreview || state.viewMode === 'edit') return;
+      const editorMax = Math.max(1, editorEl.scrollHeight - editorEl.clientHeight);
+      const previewMax = Math.max(1, previewBgEl.scrollHeight - previewBgEl.clientHeight);
+      const ratio = editorEl.scrollTop / editorMax;
+      syncingFromEditor = true;
+      previewBgEl.scrollTop = ratio * previewMax;
+      requestAnimationFrame(() => { syncingFromEditor = false; });
+    };
+
+    const syncToEditor = () => {
+      if (syncingFromEditor || state.viewMode === 'preview') return;
+      const editorMax = Math.max(1, editorEl.scrollHeight - editorEl.clientHeight);
+      const previewMax = Math.max(1, previewBgEl.scrollHeight - previewBgEl.clientHeight);
+      const ratio = previewBgEl.scrollTop / previewMax;
+      syncingFromPreview = true;
+      editorEl.scrollTop = ratio * editorMax;
+      requestAnimationFrame(() => { syncingFromPreview = false; });
+    };
+
+    editorEl.addEventListener('scroll', syncToPreview);
+    previewBgEl.addEventListener('scroll', syncToEditor);
+  };
+
   window.bindEditor({ editorEl, onTextChanged });
-  window.bindExportButtons(() => ({ markdown: state.markdown, settings: state.settings, filename: state.filename }));
-  window.renderSettingsPanel(state.settings, onSettingChange, applyPreset, savePreset, deletePreset);
+  window.bindExportButtons(() => ({
+    markdown: state.markdown,
+    settings: state.settings,
+    filename: state.filename,
+    assets: getReferencedAssetsPayload(),
+  }));
+  renderSettingsPanel();
+  attachToolbarHandlers();
+  initSplitter();
+  initScrollSync();
+  normalizeInlineDataUrlsToAssets();
 
   themeToggle.addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   document.querySelectorAll('.view-mode-group .tool-btn').forEach((btn) => btn.addEventListener('click', () => setViewMode(btn.dataset.view)));
@@ -296,15 +715,20 @@ console.log('code block')
     if (e.ctrlKey && e.key === '1') { e.preventDefault(); setViewMode('edit'); }
     if (e.ctrlKey && e.key === '2') { e.preventDefault(); setViewMode('split'); }
     if (e.ctrlKey && e.key === '3') { e.preventDefault(); setViewMode('preview'); }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'h') { e.preventDefault(); window.exportHTMLWeb({ markdown: state.markdown, settings: state.settings, filename: state.filename }); }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'k') { e.preventDefault(); window.exportHTMLforHWP({ markdown: state.markdown, settings: state.settings, filename: state.filename }); }
-    if (e.ctrlKey && e.key.toLowerCase() === 'p') { e.preventDefault(); window.exportPDF(); }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'h') { e.preventDefault(); window.exportHTMLWeb({ markdown: state.markdown, settings: state.settings, filename: state.filename, assets: getReferencedAssetsPayload() }); }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'k') { e.preventDefault(); window.exportHTMLforHWP({ markdown: state.markdown, settings: state.settings, filename: state.filename, assets: getReferencedAssetsPayload() }); }
+    if (e.ctrlKey && e.key.toLowerCase() === 'p') { e.preventDefault(); window.exportPDF({ markdown: state.markdown, settings: state.settings, assets: getReferencedAssetsPayload() }); }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'w') { e.preventDefault(); exportHWPX(); }
+    if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); wrapSelection('**', '**'); }
+    if (e.ctrlKey && e.key.toLowerCase() === 'i') { e.preventDefault(); wrapSelection('*', '*'); }
   });
 
   editorEl.value = state.markdown;
+  const zoomLabel = document.getElementById('zoom-label');
+  if (zoomLabel) zoomLabel.textContent = `${Math.round((Number(state.settings.scale) || 1) * 100)}%`;
   setTheme(localStorage.getItem('mdhwpx.theme') || 'light');
-  setViewMode('split');
+  setSettingsPanelOpen(state.settingsPanelOpen);
+  setViewMode(state.viewMode);
   repaint();
   loadTemplates();
   checkServer();

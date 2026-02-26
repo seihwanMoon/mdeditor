@@ -11,17 +11,29 @@ function filenameBase(name = 'document.md') {
   return name.replace(/\.[^/.]+$/, '') || 'document';
 }
 
-window.exportHTMLWeb = function exportHTMLWeb({ markdown, settings, filename }) {
-  const fm = window.parseFrontmatter(markdown);
-  const md = window.stripFrontmatter(markdown);
+function buildRenderedDocument(markdown, settings, assets = {}) {
+  const resolved = window.resolveMarkdownAssets(markdown, assets);
+  const sized = window.applyImageSizeSyntax(resolved);
+  const fm = window.parseFrontmatter(sized);
+  const md = window.stripFrontmatter(sized);
   const body = marked.parse(md, { breaks: settings.breaks, gfm: true });
-  const html = window.buildIframeDoc((fm ? window.buildFrontmatterHeader(fm) : '') + body, settings);
+  return {
+    fm,
+    body,
+    html: window.buildIframeDoc((fm ? window.buildFrontmatterHeader(fm) : '') + body, settings),
+  };
+}
+
+window.exportHTMLWeb = function exportHTMLWeb({ markdown, settings, filename, assets = {} }) {
+  const { html } = buildRenderedDocument(markdown, settings, assets);
   download(`${filenameBase(filename)}.html`, html, 'text/html');
 };
 
-window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filename }) {
-  const fm = window.parseFrontmatter(markdown);
-  const md = window.stripFrontmatter(markdown);
+window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filename, assets = {} }) {
+  const resolved = window.resolveMarkdownAssets(markdown, assets);
+  const sized = window.applyImageSizeSyntax(resolved);
+  const fm = window.parseFrontmatter(sized);
+  const md = window.stripFrontmatter(sized);
   const body = marked.parse(md, { breaks: settings.breaks, gfm: true });
   const html = window.buildIframeDoc((fm ? window.buildFrontmatterHWP(fm, window.FONT_MAP[settings.fontFamily] || 'sans-serif') : '') + body, settings);
 
@@ -34,12 +46,26 @@ window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filena
   download(`${filenameBase(filename)}_hwp.html`, `<!doctype html>${doc.documentElement.outerHTML}`, 'text/html');
 };
 
-window.exportPDF = function exportPDF() {
-  window.print();
+window.exportPDF = function exportPDF({ markdown, settings, assets = {} }) {
+  const { html } = buildRenderedDocument(markdown, settings, assets);
+  const win = window.open('', '_blank', 'noopener,noreferrer');
+  if (!win) {
+    window.print();
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  const runPrint = () => {
+    win.focus();
+    win.print();
+  };
+  if (win.document.readyState === 'complete') runPrint();
+  else win.addEventListener('load', runPrint, { once: true });
 };
 
 window.bindExportButtons = function bindExportButtons(getState) {
   document.getElementById('btn-export-web').addEventListener('click', () => window.exportHTMLWeb(getState()));
   document.getElementById('btn-export-hangul').addEventListener('click', () => window.exportHTMLforHWP(getState()));
-  document.getElementById('btn-export-pdf').addEventListener('click', () => window.exportPDF());
+  document.getElementById('btn-export-pdf').addEventListener('click', () => window.exportPDF(getState()));
 };

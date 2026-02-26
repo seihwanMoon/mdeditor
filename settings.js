@@ -78,7 +78,7 @@ window.renderSettingsPanel = function renderSettingsPanel(settings, onChange, on
     ${section('📋 HWPX 템플릿', `
       <label>템플릿<select id="set-template"><option>서버 없음</option></select></label>
       <button id="btn-convert-hwpx" disabled>HWPX 변환</button>
-      <p class="hint">python server.py 실행 필요</p>
+      <p class="hint" id="template-server-hint">서버 상태 확인 중...</p>
     `, 'sec-template')}
 
     ${section('💾 프리셋', `
