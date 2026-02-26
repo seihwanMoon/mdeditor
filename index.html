@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MD-HWPX Studio</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="titlebar">
+      <div class="app-name">MD-HWPX Studio</div>
+      <button id="theme-toggle" class="title-action" type="button" aria-label="테마 전환">🌙</button>
+    </div>
+
+    <div id="toolbar">
+      <div id="toolbar-main" class="toolbar-row">
+        <div class="tool-group">
+          <button class="tool-btn" id="btn-new"><span>📄</span><small>새문서</small></button>
+          <button class="tool-btn" id="btn-open"><span>📂</span><small>열기</small></button>
+          <button class="tool-btn" id="btn-save"><span>💾</span><small>저장</small></button>
+        </div>
+        <div class="tool-divider"></div>
+        <div class="tool-group">
+          <button class="tool-btn" id="btn-export-web"><span>🌐</span><small>HTML웹↓</small></button>
+          <button class="tool-btn" id="btn-export-hangul"><span>📝</span><small>HTML한글↓</small></button>
+          <button class="tool-btn" id="btn-export-pdf"><span>📕</span><small>PDF↓</small></button>
+          <button class="tool-btn" id="btn-export-hwpx" disabled><span>📘</span><small>HWPX↓</small></button>
+        </div>
+        <div class="tool-divider"></div>
+        <div class="tool-group">
+          <button class="tool-btn" id="btn-insert-table"><span>▦</span><small>표</small></button>
+          <button class="tool-btn" id="btn-insert-image"><span>🖼</span><small>이미지</small></button>
+          <button class="tool-btn" id="btn-toolbar-presets"><span>🎚</span><small>프리셋</small></button>
+        </div>
+        <div class="tool-divider"></div>
+        <div class="tool-group view-mode-group">
+          <button class="tool-btn is-active" data-view="edit"><span>✏️</span><small>편집</small></button>
+          <button class="tool-btn" data-view="split"><span>↔️</span><small>분할</small></button>
+          <button class="tool-btn" data-view="preview"><span>👁</span><small>미리보기</small></button>
+        </div>
+        <div class="tool-divider"></div>
+        <div class="tool-group">
+          <button class="tool-btn" id="btn-toggle-settings"><span>⚙</span><small>문서설정</small></button>
+          <button class="tool-btn" id="btn-help"><span>❓</span><small>도움말</small></button>
+        </div>
+      </div>
+
+      <div id="toolbar-format" class="toolbar-row">
+        <div class="tool-group">
+          <select id="fmt-block" class="format-select" aria-label="문단 스타일">
+            <option value="">본문</option>
+            <option value="h1">제목 1</option>
+            <option value="h2">제목 2</option>
+            <option value="h3">제목 3</option>
+          </select>
+        </div>
+        <div class="tool-divider"></div>
+        <div class="tool-group">
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-h1"><span>H1</span><small>제목1</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-h2"><span>H2</span><small>제목2</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-bold"><span>B</span><small>굵게</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-italic"><span>I</span><small>기울임</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-strike"><span>S</span><small>취소선</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-code"><span>&lt;/&gt;</span><small>코드</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-quote"><span>❞</span><small>인용</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-link"><span>🔗</span><small>링크</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-ul"><span>•</span><small>목록</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-ol"><span>1.</span><small>번호</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-fmt-hr"><span>―</span><small>수평선</small></button>
+        </div>
+        <div class="tool-divider"></div>
+        <div class="tool-group"><span id="zoom-label" class="zoom-label">100%</span></div>
+      </div>
+    </div>
+
+    <div id="workspace">
+      <div id="editor-panel">
+        <div id="find-bar" class="hidden">
+          <input id="find-input" type="text" placeholder="찾기 (Enter: 다음, Shift+Enter: 이전, Esc: 닫기)" />
+          <span id="find-count">0/0</span>
+          <button id="find-close" type="button">✕</button>
+        </div>
+        <div id="editor-wrap">
+          <div id="line-numbers"></div>
+          <textarea id="editor" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div id="panel-splitter" title="편집/미리보기 너비 조절" aria-hidden="true"></div>
+      <div id="preview-panel">
+        <div id="preview-bg">
+          <iframe id="preview-iframe" title="A4 preview"></iframe>
+        </div>
+      </div>
+
+      <aside id="settings-panel"></aside>
+    </div>
+
+    <div id="statusbar">
+      <div id="status-left">줄 1, 열 1 | 1줄 | 0자 | Markdown</div>
+      <div id="status-right">● 서버 없음</div>
+    </div>
+  </div>
+  <div id="toast-host"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <script src="settings.js"></script>
+  <script src="presets.js"></script>
+  <script src="preview.js"></script>
+  <script src="editor.js"></script>
+  <script src="export.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
