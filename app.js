@@ -40,6 +40,8 @@ console.log('code block')
   const statusRight = document.getElementById('status-right');
   const themeToggle = document.getElementById('theme-toggle');
   const settingsToggleBtn = document.getElementById('btn-toggle-settings');
+  const deployModeRaw = String((window.MDEDIT_DEPLOY && window.MDEDIT_DEPLOY.mode) || 'full').toLowerCase();
+  const hwpxEnabled = !(deployModeRaw === 'web' || deployModeRaw === 'web-only' || deployModeRaw === 'web_only');
 
   const parseStoredJson = (key, fallback) => {
     try {
@@ -229,6 +231,10 @@ console.log('code block')
   const loadTemplates = async () => {
     const sel = document.getElementById('set-template');
     if (!sel) return;
+    if (!hwpxEnabled) {
+      sel.innerHTML = '<option value="">웹 전용 배포</option>';
+      return;
+    }
     try {
       const res = await fetch('http://127.0.0.1:8000/api/templates');
       const json = await res.json();
@@ -254,6 +260,13 @@ console.log('code block')
   };
 
   const loadHistory = async (withToast = false) => {
+    if (!hwpxEnabled) {
+      state.history = [];
+      if (typeof window.renderConversionHistory === 'function') {
+        window.renderConversionHistory(state.history);
+      }
+      return;
+    }
     try {
       const ts = Date.now();
       const res = await fetch(`http://127.0.0.1:8000/api/history?limit=20&_ts=${ts}`, {
@@ -286,12 +299,32 @@ console.log('code block')
   };
 
   const setHwpxButtons = (disabled) => {
-    document.getElementById('btn-export-hwpx').disabled = disabled;
+    const topBtn = document.getElementById('btn-export-hwpx');
+    if (topBtn) topBtn.disabled = disabled;
     const innerConvertBtn = document.getElementById('btn-convert-hwpx');
     if (innerConvertBtn) innerConvertBtn.disabled = disabled;
   };
 
+  const applyDeploymentModeUi = () => {
+    const topBtn = document.getElementById('btn-export-hwpx');
+    if (topBtn && !hwpxEnabled) {
+      topBtn.style.display = 'none';
+      topBtn.disabled = true;
+    }
+    const secTemplate = document.getElementById('sec-template');
+    const secHistory = document.getElementById('sec-history');
+    [secTemplate, secHistory].forEach((sec) => {
+      const details = sec ? sec.closest('details') : null;
+      if (details && !hwpxEnabled) details.style.display = 'none';
+    });
+  };
+
   const syncServerUiByState = () => {
+    if (!hwpxEnabled || state.serverState === 'web-only') {
+      setHwpxButtons(true);
+      setTemplateHint('웹 전용 배포: HWPX 기능 비활성화');
+      return;
+    }
     if (state.serverState === 'online') {
       setHwpxButtons(false);
       setTemplateHint('서버 연결됨 (HWPX 변환 가능)');
@@ -312,6 +345,18 @@ console.log('code block')
   };
 
   const checkServer = async () => {
+    if (!hwpxEnabled) {
+      state.serverState = 'web-only';
+      statusRight.textContent = '● 웹 전용 모드';
+      statusRight.dataset.state = 'warn';
+      state.history = [];
+      if (typeof window.renderConversionHistory === 'function') {
+        window.renderConversionHistory(state.history);
+      }
+      syncServerUiByState();
+      return;
+    }
+
     const c = new AbortController();
     const timer = setTimeout(() => c.abort(), 2000);
 
@@ -408,7 +453,11 @@ console.log('code block')
     const btn = document.getElementById('btn-export-hwpx');
     const template = document.getElementById('set-template')?.value || 'default.hwpx';
     const convertMode = state.settings.convertMode || 'template_match';
-    if (btn.disabled) {
+    if (!hwpxEnabled) {
+      showToast('웹 전용 배포에서는 HWPX 변환을 사용할 수 없습니다', 'warn');
+      return;
+    }
+    if (btn && btn.disabled) {
       showToast('서버를 먼저 실행하세요: python server.py', 'warn');
       return;
     }
@@ -579,6 +628,7 @@ console.log('code block')
     const convertBtn = document.getElementById('btn-convert-hwpx');
     if (convertBtn) convertBtn.addEventListener('click', exportHWPX);
     syncServerUiByState();
+    applyDeploymentModeUi();
   };
 
   const replaceSelection = (build) => {
@@ -879,7 +929,8 @@ console.log('code block')
   });
   document.getElementById('btn-open').addEventListener('click', openFile);
   document.getElementById('btn-save').addEventListener('click', saveFile);
-  document.getElementById('btn-export-hwpx').addEventListener('click', exportHWPX);
+  const topHwpxBtn = document.getElementById('btn-export-hwpx');
+  if (topHwpxBtn) topHwpxBtn.addEventListener('click', exportHWPX);
 
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); }
@@ -902,7 +953,15 @@ console.log('code block')
   setSettingsPanelOpen(state.settingsPanelOpen);
   setViewMode(state.viewMode);
   repaint();
-  loadTemplates();
-  checkServer();
-  setInterval(checkServer, 5000);
+  if (hwpxEnabled) {
+    loadTemplates();
+    checkServer();
+    setInterval(checkServer, 5000);
+  } else {
+    state.serverState = 'web-only';
+    statusRight.textContent = '● 웹 전용 모드';
+    statusRight.dataset.state = 'warn';
+    syncServerUiByState();
+    applyDeploymentModeUi();
+  }
 })();
