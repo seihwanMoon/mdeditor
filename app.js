@@ -411,7 +411,7 @@ console.log('code block')
       let htmlContent = '';
       if (convertMode === 'style_priority' && typeof window.composeDocumentHtml === 'function' && typeof window.buildIframeDoc === 'function') {
         const composed = window.composeDocumentHtml(state.markdown, state.settings, { assets: assetsPayload, frontmatterMode: 'preview' });
-        htmlContent = window.buildIframeDoc(composed.htmlBody, state.settings, composed.fm || {});
+        htmlContent = composed.htmlBody || '';
       }
       const res = await fetch('http://127.0.0.1:8000/api/convert/hwpx', {
         method: 'POST',

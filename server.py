@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -184,6 +185,48 @@ def _normalize_image_size_syntax_for_pandoc(md_content: str) -> str:
         lambda m: f"![{m.group(1).strip()}]({m.group(3).strip()})",
         md_content,
     )
+
+
+def _normalize_style_html_for_pandoc(html_content: str) -> str:
+    raw = str(html_content or "")
+    if not raw.strip():
+        return ""
+
+    # buildIframeDoc 전체 문서가 넘어오면 main/body 내부만 추출해 Pandoc 파서 안정성을 높인다.
+    m = re.search(r"<main[^>]*>([\s\S]*?)</main>", raw, flags=re.IGNORECASE)
+    if m:
+        body = m.group(1)
+    else:
+        m = re.search(r"<body[^>]*>([\s\S]*?)</body>", raw, flags=re.IGNORECASE)
+        body = m.group(1) if m else raw
+
+    body = re.sub(r"<script\b[\s\S]*?</script>", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"<style\b[\s\S]*?</style>", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"<link\b[^>]*>", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\sclass=(\"[^\"]*\"|'[^']*')", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\sdata-[a-zA-Z0-9_-]+=(\"[^\"]*\"|'[^']*')", "", body, flags=re.IGNORECASE)
+    return f'<!doctype html><html><head><meta charset="utf-8"></head><body>{body}</body></html>'
+
+
+def _hwpx_has_meaningful_text(hwpx_path: Path) -> bool:
+    try:
+        with zipfile.ZipFile(hwpx_path) as zf:
+            section_names = [n for n in zf.namelist() if re.match(r"^Contents/section\d+\.xml$", n)]
+            for name in section_names:
+                xml = zf.read(name).decode("utf-8", "ignore")
+                texts = re.findall(r"<hp:t>(.*?)</hp:t>", xml, flags=re.DOTALL)
+                joined = "".join(texts).replace("\u200b", "").strip()
+                if re.search(r"[0-9A-Za-z가-힣]", joined):
+                    return True
+            try:
+                preview = zf.read("Preview/PrvText.txt").decode("utf-8", "ignore").strip()
+                if re.search(r"[0-9A-Za-z가-힣]", preview):
+                    return True
+            except KeyError:
+                pass
+    except Exception:
+        return False
+    return False
 
 
 def _strip_frontmatter(md_content: str) -> str:
@@ -430,11 +473,13 @@ def convert_hwpx(req: ConvertRequest):
             yaml_disabled_retry = False
             yaml_html_reader_retry = False
             style_to_markdown_retry = False
+            style_html_empty_output_retry = False
 
             try:
                 if convert_mode == "style_priority" and str(getattr(req, "html_content", "") or "").strip():
                     html_file = tmp / "input_preview.html"
-                    html_file.write_text(str(req.html_content), encoding="utf-8")
+                    normalized_html = _normalize_style_html_for_pandoc(str(req.html_content))
+                    html_file.write_text(normalized_html, encoding="utf-8")
                     current_input = html_file
                     input_kind = "html"
                 result = run_convert(current_input, use_reference=bool(reference_doc_arg))
@@ -442,6 +487,18 @@ def convert_hwpx(req: ConvertRequest):
                 raise HTTPException(status_code=500, detail="HWPX 변환 CLI 실행 실패 (python/pypandoc-hwpx 경로 확인)")
             except subprocess.TimeoutExpired:
                 raise HTTPException(status_code=504, detail="변환 시간 초과 (120초)")
+
+            if result.returncode == 0 and input_kind == "html" and out_file.exists():
+                # 일부 템플릿/HTML 조합에서 성공 코드지만 본문이 비는 사례가 있어 내용 검증 후 폴백한다.
+                if not _hwpx_has_meaningful_text(out_file):
+                    style_html_empty_output_retry = True
+                    style_to_markdown_retry = True
+                    try:
+                        current_input = md_file
+                        input_kind = "markdown"
+                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                    except subprocess.TimeoutExpired:
+                        raise HTTPException(status_code=504, detail="변환 시간 초과 (스타일 HTML 빈출력 폴백 재시도 포함, 120초)")
 
             # 스타일 우선(HTML) 입력이 실패하면 markdown 변환 경로로 1회 자동 폴백.
             if result.returncode != 0 and input_kind == "html":
@@ -536,10 +593,11 @@ def convert_hwpx(req: ConvertRequest):
                 except Exception:
                     failed_dump = None
                 logger.error(
-                    "pandoc conversion failed: mode=%s retried_without_template=%s style_to_markdown_retry=%s yaml_recovered=%s yaml_disabled_retry=%s yaml_html_reader_retry=%s failed_input=%s detail=%s",
+                    "pandoc conversion failed: mode=%s retried_without_template=%s style_to_markdown_retry=%s style_html_empty_output_retry=%s yaml_recovered=%s yaml_disabled_retry=%s yaml_html_reader_retry=%s failed_input=%s detail=%s",
                     convert_mode,
                     retried_without_template,
                     style_to_markdown_retry,
+                    style_html_empty_output_retry,
                     yaml_recovered,
                     yaml_disabled_retry,
                     yaml_html_reader_retry,
