@@ -41,9 +41,34 @@ console.log('code block')
   const themeToggle = document.getElementById('theme-toggle');
   const settingsToggleBtn = document.getElementById('btn-toggle-settings');
 
+  const parseStoredJson = (key, fallback) => {
+    try {
+      return JSON.parse(localStorage.getItem(key) || '');
+    } catch {
+      return fallback;
+    }
+  };
+
+  const mergeDeep = (target, source) => {
+    const out = Array.isArray(target) ? [...target] : { ...target };
+    if (!source || typeof source !== 'object') return out;
+    Object.keys(source).forEach((key) => {
+      const src = source[key];
+      if (src && typeof src === 'object' && !Array.isArray(src)) {
+        const base = out[key] && typeof out[key] === 'object' && !Array.isArray(out[key]) ? out[key] : {};
+        out[key] = mergeDeep(base, src);
+      } else {
+        out[key] = src;
+      }
+    });
+    return out;
+  };
+
+  const savedSettings = parseStoredJson('mdhwpx.settings', {});
+
   const state = {
     markdown: localStorage.getItem('md-hwpx-content') || SAMPLE_MD,
-    settings: Object.assign(window.deepClone(window.defaultSettings), JSON.parse(localStorage.getItem('mdhwpx.settings') || '{}')),
+    settings: mergeDeep(window.deepClone(window.defaultSettings), savedSettings),
     viewMode: localStorage.getItem('mdhwpx.viewMode') || 'split',
     filename: 'document.md',
     fileHandle: null,
@@ -51,7 +76,9 @@ console.log('code block')
     splitRatio: Number(localStorage.getItem('mdhwpx.splitRatio') || 0.5),
     serverState: 'checking',
     assets: {},
+    history: [],
   };
+  let syncPreviewToCaret = () => {};
 
   try {
     state.assets = JSON.parse(localStorage.getItem('mdhwpx.assets') || '{}');
@@ -175,6 +202,7 @@ console.log('code block')
     window.updateLineNumbers(editorEl);
     window.updatePreview(state.markdown, state.settings);
     updateStatus();
+    syncPreviewToCaret();
   }, 300);
 
   const autoSave = debounce(() => {
@@ -191,7 +219,7 @@ console.log('code block')
   };
 
   const applySettings = (settings) => {
-    state.settings = window.deepClone(settings);
+    state.settings = mergeDeep(window.deepClone(window.defaultSettings), settings || {});
     localStorage.setItem('mdhwpx.settings', JSON.stringify(state.settings));
     const zoomLabel = document.getElementById('zoom-label');
     if (zoomLabel) zoomLabel.textContent = `${Math.round((Number(state.settings.scale) || 1) * 100)}%`;
@@ -211,6 +239,36 @@ console.log('code block')
       if (templates.includes('default.hwpx')) sel.value = 'default.hwpx';
     } catch {
       sel.innerHTML = '<option value="">서버 없음</option>';
+    }
+  };
+
+  const formatHistoryDate = (isoText) => {
+    const d = new Date(isoText);
+    if (Number.isNaN(d.getTime())) return isoText || '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${day} ${hh}:${mm}`;
+  };
+
+  const loadHistory = async (withToast = false) => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/history?limit=20');
+      if (!res.ok) throw new Error('history_fetch_failed');
+      const json = await res.json();
+      const items = Array.isArray(json.items) ? json.items : [];
+      state.history = items.map((item) => ({
+        ...item,
+        created_at_local: formatHistoryDate(item.created_at),
+      }));
+      if (typeof window.renderConversionHistory === 'function') {
+        window.renderConversionHistory(state.history);
+      }
+      if (withToast) showToast('변환 이력 새로고침 완료', 'info');
+    } catch {
+      if (withToast) showToast('변환 이력 조회 실패', 'warn');
     }
   };
 
@@ -269,6 +327,14 @@ console.log('code block')
       clearTimeout(timer);
       syncServerUiByState();
       await loadTemplates();
+      if (state.serverState === 'offline') {
+        state.history = [];
+        if (typeof window.renderConversionHistory === 'function') {
+          window.renderConversionHistory(state.history);
+        }
+      } else {
+        await loadHistory();
+      }
     }
   };
 
@@ -349,10 +415,15 @@ console.log('code block')
           filename: state.filename.replace(/\.[^/.]+$/, ''),
           metadata: {
             title: fm.title || '',
+            subtitle: fm.subtitle || '',
             author: fm.author || '',
             date: fm.date || '',
+            organization: fm.organization || '',
           },
           assets: getReferencedAssetsPayload(),
+          settings: {
+            specialPages: state.settings.specialPages || {},
+          },
         }),
       });
 
@@ -374,17 +445,25 @@ console.log('code block')
       a.click();
       URL.revokeObjectURL(a.href);
       showToast('HWPX 변환 완료', 'success');
+      await loadHistory();
     } catch (e) {
       showToast(e.message || 'HWPX 변환 실패', 'error');
     }
   };
 
-  const onSettingChange = (path, value) => {
-    if (path.startsWith('margin.')) {
-      state.settings.margin[path.split('.')[1]] = value;
-    } else {
-      state.settings[path] = value;
+  const setByPath = (obj, path, value) => {
+    const keys = String(path).split('.');
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i += 1) {
+      const k = keys[i];
+      if (!cur[k] || typeof cur[k] !== 'object') cur[k] = {};
+      cur = cur[k];
     }
+    cur[keys[keys.length - 1]] = value;
+  };
+
+  const onSettingChange = (path, value) => {
+    setByPath(state.settings, path, value);
     applySettings(state.settings);
   };
 
@@ -407,7 +486,17 @@ console.log('code block')
   };
 
   const renderSettingsPanel = () => {
-    window.renderSettingsPanel(state.settings, onSettingChange, applyPreset, savePreset, deletePreset);
+    window.renderSettingsPanel(
+      state.settings,
+      onSettingChange,
+      applyPreset,
+      savePreset,
+      deletePreset,
+      {
+        history: state.history,
+        onRefreshHistory: () => loadHistory(true),
+      },
+    );
     const convertBtn = document.getElementById('btn-convert-hwpx');
     if (convertBtn) convertBtn.addEventListener('click', exportHWPX);
     syncServerUiByState();
@@ -470,6 +559,10 @@ console.log('code block')
       if (!line.trim()) return line;
       return `${prefix}${line.replace(/^\s*#{1,6}\s+/, '')}`;
     });
+  };
+
+  const setParagraph = () => {
+    replaceSelectedLines((line) => line.replace(/^\s*#{1,6}\s+/, ''));
   };
 
   const setUnorderedList = () => {
@@ -594,8 +687,6 @@ console.log('code block')
     bind('btn-fmt-quote', () => replaceSelectedLines((line) => (line.trim() ? `> ${line.replace(/^\s*>\s+/, '')}` : line)));
     bind('btn-fmt-ul', setUnorderedList);
     bind('btn-fmt-ol', setOrderedList);
-    bind('btn-fmt-h1', () => setHeading(1));
-    bind('btn-fmt-h2', () => setHeading(2));
     bind('btn-fmt-hr', () => insertBlock('\n---\n'));
 
     bind('btn-insert-table', insertTable);
@@ -616,10 +707,10 @@ console.log('code block')
     const blockSelect = document.getElementById('fmt-block');
     if (blockSelect) {
       blockSelect.addEventListener('change', () => {
-        if (blockSelect.value === 'h1') setHeading(1);
-        else if (blockSelect.value === 'h2') setHeading(2);
-        else if (blockSelect.value === 'h3') setHeading(3);
-        blockSelect.value = '';
+        const m = blockSelect.value.match(/^h([1-6])$/);
+        if (m) setHeading(Number(m[1]));
+        else if (blockSelect.value === 'p') setParagraph();
+        blockSelect.value = 'p';
       });
     }
   };
@@ -658,10 +749,9 @@ console.log('code block')
 
   const initScrollSync = () => {
     let syncingFromEditor = false;
-    let syncingFromPreview = false;
 
-    const syncToPreview = () => {
-      if (syncingFromPreview || state.viewMode === 'edit') return;
+    const syncToPreviewByScroll = () => {
+      if (state.viewMode === 'edit') return;
       const editorMax = Math.max(1, editorEl.scrollHeight - editorEl.clientHeight);
       const previewMax = Math.max(1, previewBgEl.scrollHeight - previewBgEl.clientHeight);
       const ratio = editorEl.scrollTop / editorMax;
@@ -670,18 +760,21 @@ console.log('code block')
       requestAnimationFrame(() => { syncingFromEditor = false; });
     };
 
-    const syncToEditor = () => {
-      if (syncingFromEditor || state.viewMode === 'preview') return;
-      const editorMax = Math.max(1, editorEl.scrollHeight - editorEl.clientHeight);
+    syncPreviewToCaret = () => {
+      if (syncingFromEditor || state.viewMode === 'edit') return;
+      const totalLines = Math.max(1, state.markdown.split('\n').length);
+      const caret = window.getCaretInfo(editorEl);
+      const lineRatio = totalLines <= 1 ? 0 : (Math.max(1, caret.line) - 1) / (totalLines - 1);
       const previewMax = Math.max(1, previewBgEl.scrollHeight - previewBgEl.clientHeight);
-      const ratio = previewBgEl.scrollTop / previewMax;
-      syncingFromPreview = true;
-      editorEl.scrollTop = ratio * editorMax;
-      requestAnimationFrame(() => { syncingFromPreview = false; });
+      syncingFromEditor = true;
+      previewBgEl.scrollTop = lineRatio * previewMax;
+      requestAnimationFrame(() => { syncingFromEditor = false; });
     };
 
-    editorEl.addEventListener('scroll', syncToPreview);
-    previewBgEl.addEventListener('scroll', syncToEditor);
+    editorEl.addEventListener('scroll', syncToPreviewByScroll);
+    ['click', 'keyup', 'input'].forEach((ev) => {
+      editorEl.addEventListener(ev, () => requestAnimationFrame(syncPreviewToCaret));
+    });
   };
 
   window.bindEditor({ editorEl, onTextChanged });

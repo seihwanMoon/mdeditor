@@ -6,7 +6,10 @@ HWPX 변환 전용 FastAPI 로컬 서버
 from __future__ import annotations
 
 import base64
+import html
 import importlib.util
+import json
+import logging
 import mimetypes
 import os
 import re
@@ -14,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -25,12 +29,15 @@ from pydantic import BaseModel
 
 app = FastAPI(title="MD-HWPX Studio Server", version="4.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+logger = logging.getLogger("mdedit.server")
 
 ROOT_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = ROOT_DIR / "templates"
 TEMPLATES_DIR.mkdir(exist_ok=True)
 DEFAULT_TEMPLATE = TEMPLATES_DIR / "default.hwpx"
 PLACEHOLDER_TEMPLATE_BYTES = b"PLACEHOLDER-HWPX"
+HISTORY_FILE = ROOT_DIR / "conversion_history.json"
+MAX_HISTORY_ITEMS = 200
 
 _pandoc_cached_path: Optional[Path] = None
 _pandoc_checked = False
@@ -88,17 +95,15 @@ def _has_hwpx_cli() -> bool:
 
 def _inject_frontmatter(md_content: str, metadata: dict) -> str:
     clean_meta = {k: str(v).strip() for k, v in (metadata or {}).items() if str(v).strip()}
+    body = _strip_frontmatter(md_content)
     if not clean_meta:
-        return md_content
-
-    stripped = md_content.lstrip("\ufeff")
-    if stripped.startswith("---\n"):
-        return md_content
+        return body
 
     fm_lines = ["---"]
-    fm_lines.extend(f"{k}: {v}" for k, v in clean_meta.items())
+    # JSON string literal은 YAML에서도 유효하므로 특수문자(: ! # 줄바꿈)로 인한 파싱 실패를 방지한다.
+    fm_lines.extend(f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in clean_meta.items())
     fm_lines.extend(["---", ""])
-    return "\n".join(fm_lines) + md_content
+    return "\n".join(fm_lines) + body
 
 
 def _safe_stem(name: str) -> str:
@@ -181,12 +186,157 @@ def _normalize_image_size_syntax_for_pandoc(md_content: str) -> str:
     )
 
 
+def _strip_frontmatter(md_content: str) -> str:
+    text = md_content or ""
+    text = text.replace("\r\n", "\n")
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    text = text.lstrip("\n")
+    if not re.match(r"^---\s*\n", text):
+        return text
+
+    lines = text.split("\n")
+    closing_idx = None
+    for i in range(1, len(lines)):
+        marker = lines[i].strip()
+        if marker in {"---", "..."}:
+            closing_idx = i
+            break
+
+    if closing_idx is not None:
+        return "\n".join(lines[closing_idx + 1 :]).lstrip("\n")
+
+    # 비정상 frontmatter(닫힘 없음): 첫 빈 줄까지 제거하여 Pandoc YAML 파싱 실패를 방지.
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "":
+            return "\n".join(lines[i + 1 :]).lstrip("\n")
+    return text
+
+
+def _extract_markdown_headings(md_content: str) -> list[tuple[int, str]]:
+    lines = _strip_frontmatter(md_content).splitlines()
+    out: list[tuple[int, str]] = []
+    in_fence = False
+    for line in lines:
+        if re.match(r"^\s*```", line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = re.match(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        if not m:
+            continue
+        text = m.group(2).strip()
+        text = re.sub(r"!\[[^\]]*]\([^)]+\)", "", text)
+        text = re.sub(r"\[([^\]]+)]\([^)]+\)", r"\1", text)
+        text = re.sub(r"`([^`]+)`", r"\1", text)
+        text = re.sub(r"[*_~]", "", text).strip()
+        if text:
+            out.append((len(m.group(1)), text))
+    return out
+
+
+def _build_cover_html(metadata: dict) -> str:
+    title = html.escape(str((metadata or {}).get("title") or "제목 없음").strip())
+    subtitle = html.escape(str((metadata or {}).get("subtitle") or "").strip())
+    author = html.escape(str((metadata or {}).get("author") or "").strip())
+    org = html.escape(str((metadata or {}).get("organization") or "").strip())
+    date_text = html.escape(str((metadata or {}).get("date") or datetime.now().strftime("%Y-%m-%d")).strip())
+    subtitle_html = f'<p style="margin:0 0 18pt;font-size:15pt;">{subtitle}</p>' if subtitle else ""
+    author_html = f"<div>작성자: {author}</div>" if author else ""
+    org_html = f"<div>소속: {org}</div>" if org else ""
+    return f"""
+<div style="page-break-after:always;min-height:220mm;border:1px solid #ddd;border-radius:6px;padding:48pt 32pt;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;">
+  <h1 style="margin:0 0 14pt;font-size:30pt;">{title}</h1>
+  {subtitle_html}
+  <div style="font-size:11pt;color:#444;line-height:1.8;">
+    {author_html}
+    {org_html}
+    <div>날짜: {date_text}</div>
+  </div>
+</div>
+"""
+
+
+def _build_toc_markdown(md_content: str, depth: int) -> str:
+    headings = _extract_markdown_headings(md_content)
+    lines = ["# 목차", ""]
+    for level, text in headings:
+        if level > depth:
+            continue
+        indent = "  " * (level - 1)
+        lines.append(f"{indent}- {text}")
+    if len(lines) == 2:
+        lines.append("- (표시할 제목 없음)")
+    lines.extend(["", '<div style="page-break-after:always;"></div>', ""])
+    return "\n".join(lines)
+
+
+def _inject_special_pages(md_content: str, metadata: dict, settings: dict) -> str:
+    special = (settings or {}).get("specialPages")
+    if not isinstance(special, dict):
+        return md_content
+
+    out: list[str] = []
+    if bool(special.get("coverPage")):
+        out.append(_build_cover_html(metadata))
+
+    if bool(special.get("tocPage")):
+        raw_depth = special.get("tocDepth")
+        try:
+            if raw_depth is None or raw_depth == "":
+                depth = 2
+            else:
+                depth = int(float(str(raw_depth).strip()))
+        except (TypeError, ValueError):
+            depth = 2
+        depth = max(1, min(6, depth))
+        out.append(_build_toc_markdown(md_content, depth))
+
+    if not out:
+        return md_content
+    special_block = "\n".join(out) + "\n"
+    frontmatter_match = re.match(r"^(\ufeff?---\n[\s\S]*?\n---\n?)", md_content or "")
+    if not frontmatter_match:
+        return special_block + md_content
+
+    frontmatter = frontmatter_match.group(1)
+    body = (md_content or "")[len(frontmatter):]
+    return frontmatter + "\n" + special_block + body
+
+
+def _read_history_items() -> list[dict]:
+    if not HISTORY_FILE.exists():
+        return []
+    try:
+        data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _write_history_items(items: list[dict]) -> None:
+    HISTORY_FILE.write_text(
+        json.dumps(items[:MAX_HISTORY_ITEMS], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _record_history(item: dict) -> None:
+    items = _read_history_items()
+    items.insert(0, item)
+    _write_history_items(items)
+
+
 class ConvertRequest(BaseModel):
     md_content: str
     template: str = "default.hwpx"
     filename: str = "document"
     metadata: dict = {}
     assets: dict = {}
+    settings: dict = {}
 
 
 @app.get("/api/health")
@@ -206,70 +356,213 @@ def list_templates():
     return {"templates": sorted(f.name for f in TEMPLATES_DIR.glob("*.hwpx"))}
 
 
+@app.get("/api/history")
+def get_history(limit: int = 20):
+    n = max(1, min(100, int(limit or 20)))
+    return {"items": _read_history_items()[:n]}
+
+
 @app.post("/api/convert/hwpx")
 def convert_hwpx(req: ConvertRequest):
-    if not _has_hwpx_cli():
-        raise HTTPException(status_code=500, detail="pypandoc-hwpx 미설치. pip install -r requirements.txt")
+    try:
+        if not _has_hwpx_cli():
+            raise HTTPException(status_code=500, detail="pypandoc-hwpx 미설치. pip install -r requirements.txt")
 
-    pandoc_path = _resolve_pandoc_path(autoinstall=True)
-    if not pandoc_path:
-        raise HTTPException(status_code=500, detail="Pandoc 미설치. https://pandoc.org/installing.html")
+        pandoc_path = _resolve_pandoc_path(autoinstall=True)
+        if not pandoc_path:
+            raise HTTPException(status_code=500, detail="Pandoc 미설치. https://pandoc.org/installing.html")
 
-    template_path = TEMPLATES_DIR / Path(req.template).name
-    if not template_path.exists():
-        raise HTTPException(status_code=404, detail=f"템플릿 없음: {req.template}")
+        template_path = TEMPLATES_DIR / Path(req.template).name
+        if not template_path.exists():
+            raise HTTPException(status_code=404, detail=f"템플릿 없음: {req.template}")
 
-    safe_name = Path(req.filename).stem or "document"
-    source_markdown = _inject_frontmatter(req.md_content, req.metadata)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        source_markdown = _materialize_markdown_assets(source_markdown, req.assets, tmp)
-        source_markdown = _normalize_image_size_syntax_for_pandoc(source_markdown)
-        md_file = tmp / "input.md"
-        out_file = tmp / f"{safe_name}.hwpx"
-        md_file.write_text(source_markdown, encoding="utf-8")
-
-        reference_doc_arg = []
+        safe_name = Path(req.filename).stem or "document"
+        source_markdown = _inject_frontmatter(req.md_content, req.metadata)
         try:
-            if template_path.read_bytes() != PLACEHOLDER_TEMPLATE_BYTES:
+            source_markdown = _inject_special_pages(source_markdown, req.metadata, req.settings)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"특수 페이지 설정 처리 실패: {e}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source_markdown = _materialize_markdown_assets(source_markdown, req.assets, tmp)
+            source_markdown = _normalize_image_size_syntax_for_pandoc(source_markdown)
+            md_file = tmp / "input.md"
+            out_file = tmp / f"{safe_name}.hwpx"
+            md_file.write_text(source_markdown, encoding="utf-8")
+
+            reference_doc_arg = []
+            try:
+                if template_path.read_bytes() != PLACEHOLDER_TEMPLATE_BYTES:
+                    reference_doc_arg = [f"--reference-doc={template_path}"]
+            except OSError:
                 reference_doc_arg = [f"--reference-doc={template_path}"]
-        except OSError:
-            reference_doc_arg = [f"--reference-doc={template_path}"]
 
-        cmd = [
-            sys.executable,
-            "-m",
-            "pypandoc_hwpx.cli",
-            str(md_file),
-            *reference_doc_arg,
-            "-o",
-            str(out_file),
-        ]
-        env = os.environ.copy()
-        env["PYPANDOC_PANDOC"] = str(pandoc_path)
-        extra_path_dirs = [str(pandoc_path.parent)]
-        local_bin = _resolve_binary("pypandoc-hwpx")
-        if local_bin:
-            extra_path_dirs.append(str(local_bin.parent))
-        env["PATH"] = os.pathsep.join(extra_path_dirs + [env.get("PATH", "")])
+            env = os.environ.copy()
+            env["PYPANDOC_PANDOC"] = str(pandoc_path)
+            extra_path_dirs = [str(pandoc_path.parent)]
+            local_bin = _resolve_binary("pypandoc-hwpx")
+            if local_bin:
+                extra_path_dirs.append(str(local_bin.parent))
+            env["PATH"] = os.pathsep.join(extra_path_dirs + [env.get("PATH", "")])
+
+            def run_convert(input_path: Path, use_reference: bool) -> subprocess.CompletedProcess:
+                if out_file.exists():
+                    try:
+                        out_file.unlink()
+                    except OSError:
+                        pass
+                cmd = [sys.executable, "-m", "pypandoc_hwpx.cli", str(input_path)]
+                if use_reference:
+                    cmd.extend(reference_doc_arg)
+                cmd.extend(["-o", str(out_file)])
+                return subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+
+            try:
+                current_markdown = source_markdown
+                current_input = md_file
+                result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+            except FileNotFoundError:
+                raise HTTPException(status_code=500, detail="HWPX 변환 CLI 실행 실패 (python/pypandoc-hwpx 경로 확인)")
+            except subprocess.TimeoutExpired:
+                raise HTTPException(status_code=504, detail="변환 시간 초과 (120초)")
+
+            # 사용자 입력 frontmatter가 깨져 있으면 strip 후 안전 frontmatter를 재주입해 1회 복구 시도.
+            yaml_recovered = False
+            yaml_disabled_retry = False
+            yaml_html_reader_retry = False
+            if result.returncode != 0:
+                err_text = result.stderr or result.stdout or ""
+                if "Error parsing YAML metadata" in err_text:
+                    yaml_recovered = True
+                    recovered_markdown = _strip_frontmatter(source_markdown)
+                    recovered_markdown = _inject_frontmatter(recovered_markdown, req.metadata)
+                    try:
+                        current_markdown = recovered_markdown
+                        md_file.write_text(current_markdown, encoding="utf-8")
+                        current_input = md_file
+                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                    except subprocess.TimeoutExpired:
+                        raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 복구 재시도 포함, 120초)")
+
+            # YAML 복구 후에도 같은 오류면 metadata 블록 파싱을 완전히 회피하는 최종 재시도.
+            if result.returncode != 0:
+                err_text = result.stderr or result.stdout or ""
+                if "Error parsing YAML metadata" in err_text:
+                    yaml_disabled_retry = True
+                    hard_markdown = "<!-- mdedit: disable yaml metadata block -->\n\n" + _strip_frontmatter(current_markdown)
+                    try:
+                        current_markdown = hard_markdown
+                        md_file.write_text(current_markdown, encoding="utf-8")
+                        current_input = md_file
+                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                    except subprocess.TimeoutExpired:
+                        raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 파싱 비활성화 재시도 포함, 120초)")
+
+            # 그래도 YAML 오류면 markdown reader의 YAML 기능을 끈 상태로 HTML 경유 변환.
+            if result.returncode != 0:
+                err_text = result.stderr or result.stdout or ""
+                if "Error parsing YAML metadata" in err_text:
+                    yaml_html_reader_retry = True
+                    plain_markdown = _strip_frontmatter(current_markdown)
+                    md_file.write_text(plain_markdown, encoding="utf-8")
+                    html_file = tmp / "input_no_yaml.html"
+                    try:
+                        pre = subprocess.run(
+                            [
+                                str(pandoc_path),
+                                "-f",
+                                "markdown-yaml_metadata_block",
+                                "-t",
+                                "html",
+                                str(md_file),
+                                "-o",
+                                str(html_file),
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                            env=env,
+                        )
+                    except subprocess.TimeoutExpired:
+                        raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 우회 HTML 전처리 포함, 120초)")
+
+                    if pre.returncode != 0:
+                        raise HTTPException(status_code=500, detail=f"YAML 우회 HTML 전처리 실패:\n{pre.stderr or pre.stdout}")
+
+                    current_input = html_file
+                    try:
+                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                    except subprocess.TimeoutExpired:
+                        raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 우회 HTML 경유 변환 포함, 120초)")
+
+            # Uploaded/legacy template가 깨져있으면 reference-doc 없이 1회 재시도.
+            retried_without_template = False
+            if result.returncode != 0 and reference_doc_arg:
+                retried_without_template = True
+                try:
+                    result = run_convert(current_input, use_reference=False)
+                except subprocess.TimeoutExpired:
+                    raise HTTPException(status_code=504, detail="변환 시간 초과 (템플릿 미적용 재시도 포함, 120초)")
+
+            if result.returncode != 0:
+                detail = result.stderr or result.stdout or "unknown"
+                failed_dump = Path(tempfile.gettempdir()) / f"mdedit_last_failed_input{current_input.suffix}"
+                try:
+                    shutil.copy2(current_input, failed_dump)
+                except Exception:
+                    failed_dump = None
+                logger.error(
+                    "pandoc conversion failed: retried_without_template=%s yaml_recovered=%s yaml_disabled_retry=%s yaml_html_reader_retry=%s failed_input=%s detail=%s",
+                    retried_without_template,
+                    yaml_recovered,
+                    yaml_disabled_retry,
+                    yaml_html_reader_retry,
+                    str(failed_dump) if failed_dump else None,
+                    detail[:1200],
+                )
+                if retried_without_template:
+                    raise HTTPException(status_code=500, detail=f"변환 실패(템플릿 미적용 재시도 후에도 실패):\n{detail}")
+                if yaml_html_reader_retry:
+                    raise HTTPException(status_code=500, detail=f"변환 실패(YAML 우회 HTML 경유 재시도 후에도 실패):\n{detail}")
+                if yaml_disabled_retry:
+                    raise HTTPException(status_code=500, detail=f"변환 실패(YAML 파싱 비활성화 재시도 후에도 실패):\n{detail}")
+                if yaml_recovered:
+                    raise HTTPException(status_code=500, detail=f"변환 실패(YAML 복구 재시도 후에도 실패):\n{detail}")
+                raise HTTPException(status_code=500, detail=f"변환 실패:\n{detail}")
+            if not out_file.exists():
+                raise HTTPException(status_code=500, detail="변환 결과 파일 없음")
+
+            dest = Path(tempfile.gettempdir()) / f"mhs_{safe_name}.hwpx"
+            shutil.copy2(out_file, dest)
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
-        except FileNotFoundError:
-            raise HTTPException(status_code=500, detail="HWPX 변환 CLI 실행 실패 (python/pypandoc-hwpx 경로 확인)")
-        except subprocess.TimeoutExpired:
-            raise HTTPException(status_code=504, detail="변환 시간 초과 (120초)")
+            _record_history(
+                {
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "filename": f"{safe_name}.hwpx",
+                    "template": template_path.name,
+                    "size_bytes": dest.stat().st_size if dest.exists() else None,
+                    "title": str((req.metadata or {}).get("title") or ""),
+                    "author": str((req.metadata or {}).get("author") or ""),
+                }
+            )
+        except Exception:
+            pass
 
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"변환 실패:\n{result.stderr or result.stdout}")
-        if not out_file.exists():
-            raise HTTPException(status_code=500, detail="변환 결과 파일 없음")
-
-        dest = Path(tempfile.gettempdir()) / f"mhs_{safe_name}.hwpx"
-        shutil.copy2(out_file, dest)
-
-    return FileResponse(str(dest), filename=f"{safe_name}.hwpx", media_type="application/octet-stream")
+        return FileResponse(str(dest), filename=f"{safe_name}.hwpx", media_type="application/octet-stream")
+    except HTTPException as e:
+        logger.error(
+            "convert_hwpx failed: status=%s detail=%s template=%s filename=%s",
+            e.status_code,
+            e.detail,
+            getattr(req, "template", None),
+            getattr(req, "filename", None),
+        )
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error during /api/convert/hwpx")
+        raise HTTPException(status_code=500, detail=f"서버 내부 예외: {type(e).__name__}: {e}")
 
 
 @app.post("/api/templates/upload")

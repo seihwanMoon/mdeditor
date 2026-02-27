@@ -3,9 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>MD-HWPX Studio</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260227a" />
 </head>
 <body>
   <div id="app">
@@ -30,8 +33,6 @@
         </div>
         <div class="tool-divider"></div>
         <div class="tool-group">
-          <button class="tool-btn" id="btn-insert-table"><span>▦</span><small>표</small></button>
-          <button class="tool-btn" id="btn-insert-image"><span>🖼</span><small>이미지</small></button>
           <button class="tool-btn" id="btn-toolbar-presets"><span>🎚</span><small>프리셋</small></button>
         </div>
         <div class="tool-divider"></div>
@@ -50,16 +51,17 @@
       <div id="toolbar-format" class="toolbar-row">
         <div class="tool-group">
           <select id="fmt-block" class="format-select" aria-label="문단 스타일">
-            <option value="">본문</option>
+            <option value="p">본문</option>
             <option value="h1">제목 1</option>
             <option value="h2">제목 2</option>
             <option value="h3">제목 3</option>
+            <option value="h4">제목 4</option>
+            <option value="h5">제목 5</option>
+            <option value="h6">제목 6</option>
           </select>
         </div>
         <div class="tool-divider"></div>
         <div class="tool-group">
-          <button class="tool-btn tool-btn-inline" id="btn-fmt-h1"><span>H1</span><small>제목1</small></button>
-          <button class="tool-btn tool-btn-inline" id="btn-fmt-h2"><span>H2</span><small>제목2</small></button>
           <button class="tool-btn tool-btn-inline" id="btn-fmt-bold"><span>B</span><small>굵게</small></button>
           <button class="tool-btn tool-btn-inline" id="btn-fmt-italic"><span>I</span><small>기울임</small></button>
           <button class="tool-btn tool-btn-inline" id="btn-fmt-strike"><span>S</span><small>취소선</small></button>
@@ -68,6 +70,8 @@
           <button class="tool-btn tool-btn-inline" id="btn-fmt-link"><span>🔗</span><small>링크</small></button>
           <button class="tool-btn tool-btn-inline" id="btn-fmt-ul"><span>•</span><small>목록</small></button>
           <button class="tool-btn tool-btn-inline" id="btn-fmt-ol"><span>1.</span><small>번호</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-insert-table"><span>▦</span><small>표</small></button>
+          <button class="tool-btn tool-btn-inline" id="btn-insert-image"><span>🖼</span><small>이미지</small></button>
           <button class="tool-btn tool-btn-inline" id="btn-fmt-hr"><span>―</span><small>수평선</small></button>
         </div>
         <div class="tool-divider"></div>
@@ -107,11 +111,11 @@
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-  <script src="settings.js"></script>
-  <script src="presets.js"></script>
-  <script src="preview.js"></script>
-  <script src="editor.js"></script>
-  <script src="export.js"></script>
-  <script src="app.js"></script>
+  <script src="settings.js?v=20260227a"></script>
+  <script src="presets.js?v=20260227a"></script>
+  <script src="preview.js?v=20260227a"></script>
+  <script src="editor.js?v=20260227a"></script>
+  <script src="export.js?v=20260227a"></script>
+  <script src="app.js?v=20260227a"></script>
 </body>
 </html>
