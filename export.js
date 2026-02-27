@@ -42,21 +42,15 @@ function hwpFontFamily(settings) {
   return String(raw).split(',')[0].replace(/['"]/g, '').trim() || 'Malgun Gothic';
 }
 
-window.exportHTMLWeb = function exportHTMLWeb({ markdown, settings, filename, assets = {} }) {
-  const { html } = buildRenderedDocument(markdown, settings, assets);
-  download(`${filenameBase(filename)}.html`, html, 'text/html');
-};
-
-window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filename, assets = {} }) {
-  const composed = window.composeDocumentHtml(markdown, settings, { assets, frontmatterMode: 'hwp' });
+function buildStyledHwpRoot(htmlBody, settings, options = {}) {
+  const replaceUnsupportedImages = !!options.replaceUnsupportedImages;
   const parser = new DOMParser();
-  const doc = parser.parseFromString(`<div id="hwp-root">${composed.htmlBody}</div>`, 'text/html');
+  const doc = parser.parseFromString(`<div id="hwp-root">${htmlBody || ''}</div>`, 'text/html');
   const root = doc.getElementById('hwp-root');
-  if (!root) return;
+  if (!root) return { rootHtml: '', bodyStyle: '' };
 
   ['section', 'main', 'article', 'header', 'footer', 'aside', 'nav'].forEach((tag) => replaceTag(doc, tag, 'div'));
   root.querySelectorAll('script,style,link').forEach((n) => n.remove());
-
   root.querySelectorAll('*').forEach((el) => {
     [...el.attributes].forEach((attr) => {
       if (attr.name === 'class' || attr.name.startsWith('data-')) el.removeAttribute(attr.name);
@@ -81,7 +75,7 @@ window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filena
   root.querySelectorAll('th,td').forEach((el) => appendInlineStyle(el, `${baseText}border:1px solid #000;padding:4pt 6pt;`));
   root.querySelectorAll('img').forEach((el) => {
     const src = String(el.getAttribute('src') || '');
-    if (src.startsWith('data:image/') || src.startsWith('asset://') || src.startsWith('blob:')) {
+    if (replaceUnsupportedImages && (src.startsWith('data:image/') || src.startsWith('asset://') || src.startsWith('blob:'))) {
       const holder = doc.createElement('p');
       const alt = String(el.getAttribute('alt') || '이미지');
       holder.textContent = `[이미지: ${alt}]`;
@@ -100,15 +94,39 @@ window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filena
     `word-break:${settings.wordBreak};`,
   ].join('');
 
+  return { rootHtml: root.innerHTML, bodyStyle };
+}
+
+window.exportHTMLWeb = function exportHTMLWeb({ markdown, settings, filename, assets = {} }) {
+  const { html } = buildRenderedDocument(markdown, settings, assets);
+  download(`${filenameBase(filename)}.html`, html, 'text/html');
+};
+
+window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filename, assets = {} }) {
+  const composed = window.composeDocumentHtml(markdown, settings, { assets, frontmatterMode: 'hwp' });
+  const styled = buildStyledHwpRoot(composed.htmlBody, settings, { replaceUnsupportedImages: true });
+
   const out = [
     '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">',
     '<html>',
     '<head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"><title>HWP Export</title></head>',
-    `<body style="${bodyStyle}">${root.innerHTML}</body>`,
+    `<body style="${styled.bodyStyle}">${styled.rootHtml}</body>`,
     '</html>',
   ].join('');
 
   download(`${filenameBase(filename)}_hwp.html`, out, 'text/html;charset=utf-8');
+};
+
+window.buildStyledHtmlForPandoc = function buildStyledHtmlForPandoc({ markdown, settings, assets = {} }) {
+  const composed = window.composeDocumentHtml(markdown, settings, { assets, frontmatterMode: 'preview' });
+  const styled = buildStyledHwpRoot(composed.htmlBody, settings, { replaceUnsupportedImages: false });
+  return [
+    '<!doctype html>',
+    '<html>',
+    '<head><meta charset="utf-8"></head>',
+    `<body style="${styled.bodyStyle}">${styled.rootHtml}</body>`,
+    '</html>',
+  ].join('');
 };
 
 window.exportPDF = function exportPDF({ markdown, settings, assets = {} }) {

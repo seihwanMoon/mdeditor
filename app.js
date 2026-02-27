@@ -409,9 +409,17 @@ console.log('code block')
       const fm = window.parseFrontmatter(state.markdown) || {};
       const assetsPayload = getReferencedAssetsPayload();
       let htmlContent = '';
-      if (convertMode === 'style_priority' && typeof window.composeDocumentHtml === 'function' && typeof window.buildIframeDoc === 'function') {
-        const composed = window.composeDocumentHtml(state.markdown, state.settings, { assets: assetsPayload, frontmatterMode: 'preview' });
-        htmlContent = composed.htmlBody || '';
+      if (convertMode === 'style_priority') {
+        if (typeof window.buildStyledHtmlForPandoc === 'function') {
+          htmlContent = window.buildStyledHtmlForPandoc({
+            markdown: state.markdown,
+            settings: state.settings,
+            assets: assetsPayload,
+          });
+        } else if (typeof window.composeDocumentHtml === 'function') {
+          const composed = window.composeDocumentHtml(state.markdown, state.settings, { assets: assetsPayload, frontmatterMode: 'preview' });
+          htmlContent = composed.htmlBody || '';
+        }
       }
       const res = await fetch('http://127.0.0.1:8000/api/convert/hwpx', {
         method: 'POST',
@@ -435,9 +443,7 @@ console.log('code block')
             exported_at: new Date().toISOString(),
             settings: state.settings,
           },
-          settings: {
-            specialPages: state.settings.specialPages || {},
-          },
+          settings: state.settings,
         }),
       });
 

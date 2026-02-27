@@ -175,6 +175,148 @@ def _materialize_markdown_assets(md_content: str, assets: dict, out_dir: Path) -
     return resolved
 
 
+def _materialize_html_assets(html_content: str, assets: dict, out_dir: Path) -> str:
+    resolved = html_content or ""
+    if not isinstance(assets, dict):
+        assets = {}
+
+    # asset://id 참조를 실제 로컬 파일로 치환
+    for asset_id, item in assets.items():
+        if isinstance(item, dict):
+            data_url = item.get("dataUrl") or item.get("data_url")
+            name = item.get("name") or f"asset_{asset_id}"
+        elif isinstance(item, str):
+            data_url = item
+            name = f"asset_{asset_id}"
+        else:
+            continue
+        local_ref = _data_url_to_file(str(data_url), out_dir, str(name))
+        if local_ref:
+            resolved = resolved.replace(f"asset://{asset_id}", local_ref)
+
+    inline_index = 0
+
+    def replace_inline(match: re.Match) -> str:
+        nonlocal inline_index
+        inline_index += 1
+        local_ref = _data_url_to_file(match.group(0), out_dir, f"inline_html_asset_{inline_index}")
+        return local_ref or match.group(0)
+
+    resolved = re.sub(
+        r"data:image/[-\w.+]+;base64,[A-Za-z0-9+/=\s]+",
+        replace_inline,
+        resolved,
+        flags=re.DOTALL,
+    )
+    return resolved
+
+
+def _settings_font_name(settings: dict) -> str:
+    if not isinstance(settings, dict):
+        return "맑은 고딕"
+    custom = str(settings.get("customFontFamily") or "").strip()
+    font_key = str(settings.get("fontFamily") or "").strip()
+    if font_key == "custom" and custom:
+        return custom.split(",")[0].replace('"', "").replace("'", "").strip() or "맑은 고딕"
+    font_map = {
+        "nanum-gothic": "나눔고딕",
+        "nanum-myeongjo": "나눔명조",
+        "malgun": "맑은 고딕",
+        "pretendard": "Pretendard",
+    }
+    return font_map.get(font_key, "맑은 고딕")
+
+
+def _parse_length_to_hwpunit(raw, default_mm: float) -> int:
+    text = str(raw or "").strip().lower()
+    if not text:
+        text = f"{default_mm}mm"
+    m = re.match(r"^(-?\d+(?:\.\d+)?)(mm|cm|in|pt)?$", text)
+    if not m:
+        return int(round(default_mm * 283.465))
+    val = float(m.group(1))
+    unit = m.group(2) or "mm"
+    if unit == "mm":
+        hwp = val * 283.465
+    elif unit == "cm":
+        hwp = val * 2834.65
+    elif unit == "in":
+        hwp = val * 7200.0
+    else:  # pt
+        hwp = val * 100.0
+    return max(0, int(round(hwp)))
+
+
+def _apply_style_settings_to_hwpx(hwpx_path: Path, settings: dict) -> None:
+    if not isinstance(settings, dict):
+        return
+    font_name = _settings_font_name(settings)
+    try:
+        font_pt = float(settings.get("fontSize") or 10)
+    except (TypeError, ValueError):
+        font_pt = 10.0
+    font_pt = min(72.0, max(6.0, font_pt))
+    scale_ratio = font_pt / 10.0
+    try:
+        line_height = float(settings.get("lineHeight") or 1.6)
+    except (TypeError, ValueError):
+        line_height = 1.6
+    line_percent = min(300, max(100, int(round(line_height * 100))))
+
+    margin_cfg = settings.get("margin") if isinstance(settings.get("margin"), dict) else {}
+    top = _parse_length_to_hwpunit(margin_cfg.get("top"), 15.0)
+    right = _parse_length_to_hwpunit(margin_cfg.get("right"), 20.0)
+    bottom = _parse_length_to_hwpunit(margin_cfg.get("bottom"), 15.0)
+    left = _parse_length_to_hwpunit(margin_cfg.get("left"), 20.0)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        work = Path(tmpdir)
+        with zipfile.ZipFile(hwpx_path, "r") as zf:
+            zf.extractall(work)
+
+        header_file = work / "Contents" / "header.xml"
+        if header_file.exists():
+            header_xml = header_file.read_text(encoding="utf-8", errors="ignore")
+            header_xml = re.sub(
+                r'(<hh:font id="0" face=")[^"]+(")',
+                lambda m: f'{m.group(1)}{font_name}{m.group(2)}',
+                header_xml,
+            )
+
+            def _scale_height(match: re.Match) -> str:
+                old = int(match.group(2))
+                new = max(100, int(round(old * scale_ratio)))
+                return f'{match.group(1)}{new}{match.group(3)}'
+
+            header_xml = re.sub(r'(<hh:charPr\b[^>]*\bheight=")(\d+)(")', _scale_height, header_xml)
+            header_xml = re.sub(
+                r'(<hh:lineSpacing\b[^>]*\bvalue=")(\d+)(")',
+                lambda m: f'{m.group(1)}{line_percent}{m.group(3)}',
+                header_xml,
+            )
+            header_file.write_text(header_xml, encoding="utf-8")
+
+        sec_dir = work / "Contents"
+        if sec_dir.exists():
+            for sec_file in sec_dir.glob("section*.xml"):
+                sec_xml = sec_file.read_text(encoding="utf-8", errors="ignore")
+                sec_xml = re.sub(
+                    r'(<hp:margin\b[^>]*\bleft=")\d+("[^>]*\bright=")\d+("[^>]*\btop=")\d+("[^>]*\bbottom=")\d+(")',
+                    lambda m: f'{m.group(1)}{left}{m.group(2)}{right}{m.group(3)}{top}{m.group(4)}{bottom}{m.group(5)}',
+                    sec_xml,
+                )
+                sec_file.write_text(sec_xml, encoding="utf-8")
+
+        out_tmp = work / "styled.hwpx"
+        with zipfile.ZipFile(out_tmp, "w", compression=zipfile.ZIP_DEFLATED) as out_zip:
+            for p in sorted(work.rglob("*")):
+                if p == out_tmp:
+                    continue
+                if p.is_file():
+                    out_zip.write(p, p.relative_to(work).as_posix())
+        shutil.copy2(out_tmp, hwpx_path)
+
+
 def _normalize_image_size_syntax_for_pandoc(md_content: str) -> str:
     # Custom syntax: ![name|400](path) -> ![name](path)
     # Width is rendered in browser/HTML/PDF layer; HWPX path keeps Pandoc-safe markdown.
@@ -445,6 +587,7 @@ def convert_hwpx(req: ConvertRequest):
                     reference_doc_arg = [f"--reference-doc={template_path}"]
             except OSError:
                 reference_doc_arg = [f"--reference-doc={template_path}"]
+            use_reference_for_mode = bool(reference_doc_arg) and convert_mode != "style_priority"
 
             env = os.environ.copy()
             env["PYPANDOC_PANDOC"] = str(pandoc_path)
@@ -479,10 +622,11 @@ def convert_hwpx(req: ConvertRequest):
                 if convert_mode == "style_priority" and str(getattr(req, "html_content", "") or "").strip():
                     html_file = tmp / "input_preview.html"
                     normalized_html = _normalize_style_html_for_pandoc(str(req.html_content))
+                    normalized_html = _materialize_html_assets(normalized_html, req.assets, tmp)
                     html_file.write_text(normalized_html, encoding="utf-8")
                     current_input = html_file
                     input_kind = "html"
-                result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                result = run_convert(current_input, use_reference=use_reference_for_mode)
             except FileNotFoundError:
                 raise HTTPException(status_code=500, detail="HWPX 변환 CLI 실행 실패 (python/pypandoc-hwpx 경로 확인)")
             except subprocess.TimeoutExpired:
@@ -496,7 +640,7 @@ def convert_hwpx(req: ConvertRequest):
                     try:
                         current_input = md_file
                         input_kind = "markdown"
-                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                        result = run_convert(current_input, use_reference=use_reference_for_mode)
                     except subprocess.TimeoutExpired:
                         raise HTTPException(status_code=504, detail="변환 시간 초과 (스타일 HTML 빈출력 폴백 재시도 포함, 120초)")
 
@@ -506,7 +650,7 @@ def convert_hwpx(req: ConvertRequest):
                 try:
                     current_input = md_file
                     input_kind = "markdown"
-                    result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                    result = run_convert(current_input, use_reference=use_reference_for_mode)
                 except subprocess.TimeoutExpired:
                     raise HTTPException(status_code=504, detail="변환 시간 초과 (스타일 HTML->Markdown 폴백 재시도 포함, 120초)")
 
@@ -521,7 +665,7 @@ def convert_hwpx(req: ConvertRequest):
                         current_markdown = recovered_markdown
                         md_file.write_text(current_markdown, encoding="utf-8")
                         current_input = md_file
-                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                        result = run_convert(current_input, use_reference=use_reference_for_mode)
                     except subprocess.TimeoutExpired:
                         raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 복구 재시도 포함, 120초)")
 
@@ -535,7 +679,7 @@ def convert_hwpx(req: ConvertRequest):
                         current_markdown = hard_markdown
                         md_file.write_text(current_markdown, encoding="utf-8")
                         current_input = md_file
-                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                        result = run_convert(current_input, use_reference=use_reference_for_mode)
                     except subprocess.TimeoutExpired:
                         raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 파싱 비활성화 재시도 포함, 120초)")
 
@@ -572,13 +716,13 @@ def convert_hwpx(req: ConvertRequest):
 
                     current_input = html_file
                     try:
-                        result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                        result = run_convert(current_input, use_reference=use_reference_for_mode)
                     except subprocess.TimeoutExpired:
                         raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 우회 HTML 경유 변환 포함, 120초)")
 
             # Uploaded/legacy template가 깨져있으면 reference-doc 없이 1회 재시도.
             retried_without_template = False
-            if result.returncode != 0 and reference_doc_arg:
+            if result.returncode != 0 and use_reference_for_mode:
                 retried_without_template = True
                 try:
                     result = run_convert(current_input, use_reference=False)
@@ -615,6 +759,17 @@ def convert_hwpx(req: ConvertRequest):
                 raise HTTPException(status_code=500, detail=f"변환 실패:\n{detail}")
             if not out_file.exists():
                 raise HTTPException(status_code=500, detail="변환 결과 파일 없음")
+
+            if convert_mode == "style_priority":
+                effective_settings = req.settings if isinstance(req.settings, dict) and req.settings else {}
+                if (not effective_settings) and isinstance(req.style_profile, dict):
+                    profile_settings = req.style_profile.get("settings")
+                    if isinstance(profile_settings, dict):
+                        effective_settings = profile_settings
+                try:
+                    _apply_style_settings_to_hwpx(out_file, effective_settings)
+                except Exception as e:
+                    logger.warning("style settings post-process skipped: %s", e)
 
             dest = Path(tempfile.gettempdir()) / f"mhs_{safe_name}.hwpx"
             shutil.copy2(out_file, dest)
