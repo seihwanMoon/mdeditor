@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -545,8 +545,11 @@ def list_templates():
 
 
 @app.get("/api/history")
-def get_history(limit: int = 20):
+def get_history(limit: int = 20, response: Response = None):
     n = max(1, min(100, int(limit or 20)))
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
     return {"items": _read_history_items()[:n]}
 
 

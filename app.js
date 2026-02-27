@@ -255,7 +255,11 @@ console.log('code block')
 
   const loadHistory = async (withToast = false) => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/history?limit=20');
+      const ts = Date.now();
+      const res = await fetch(`http://127.0.0.1:8000/api/history?limit=20&_ts=${ts}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (!res.ok) throw new Error('history_fetch_failed');
       const json = await res.json();
       const items = Array.isArray(json.items) ? json.items : [];
@@ -268,6 +272,10 @@ console.log('code block')
       }
       if (withToast) showToast('변환 이력 새로고침 완료', 'info');
     } catch {
+      state.history = [];
+      if (typeof window.renderConversionHistory === 'function') {
+        window.renderConversionHistory(state.history);
+      }
       if (withToast) showToast('변환 이력 조회 실패', 'warn');
     }
   };
