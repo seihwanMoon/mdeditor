@@ -22,3 +22,19 @@
 생성 폴더:
 - `release/web`
 - `release/hwpx`
+
+## Windows 패키지 생성
+- 프로젝트 루트에서:
+  - `./build_windows_packages.sh`
+
+생성 파일:
+- `dist/windows/mdedit-web-win.zip`
+- `dist/windows/mdedit-full-win.zip`
+
+### Windows 사용자 실행
+- Web:
+  - 압축 해제 후 `start_web.bat` 더블클릭
+  - Python 설치 불필요
+- Full:
+  - 압축 해제 후 `setup_full.bat` 1회 실행
+  - 이후 `start_full.bat` 실행
