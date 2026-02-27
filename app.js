@@ -399,6 +399,7 @@ console.log('code block')
   const exportHWPX = async () => {
     const btn = document.getElementById('btn-export-hwpx');
     const template = document.getElementById('set-template')?.value || 'default.hwpx';
+    const convertMode = state.settings.convertMode || 'template_match';
     if (btn.disabled) {
       showToast('서버를 먼저 실행하세요: python server.py', 'warn');
       return;
@@ -406,11 +407,19 @@ console.log('code block')
 
     try {
       const fm = window.parseFrontmatter(state.markdown) || {};
+      const assetsPayload = getReferencedAssetsPayload();
+      let htmlContent = '';
+      if (convertMode === 'style_priority' && typeof window.composeDocumentHtml === 'function' && typeof window.buildIframeDoc === 'function') {
+        const composed = window.composeDocumentHtml(state.markdown, state.settings, { assets: assetsPayload, frontmatterMode: 'preview' });
+        htmlContent = window.buildIframeDoc(composed.htmlBody, state.settings, composed.fm || {});
+      }
       const res = await fetch('http://127.0.0.1:8000/api/convert/hwpx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           md_content: state.markdown,
+          mode: convertMode,
+          html_content: htmlContent,
           template,
           filename: state.filename.replace(/\.[^/.]+$/, ''),
           metadata: {
@@ -420,7 +429,12 @@ console.log('code block')
             date: fm.date || '',
             organization: fm.organization || '',
           },
-          assets: getReferencedAssetsPayload(),
+          assets: assetsPayload,
+          style_profile: {
+            profile_name: state.settings.styleProfileName || '기본',
+            exported_at: new Date().toISOString(),
+            settings: state.settings,
+          },
           settings: {
             specialPages: state.settings.specialPages || {},
           },
@@ -485,6 +499,55 @@ console.log('code block')
     showToast('프리셋 삭제 완료', 'info');
   };
 
+  const exportStyleProfile = () => {
+    try {
+      const profile = {
+        version: 1,
+        profileName: state.settings.styleProfileName || '기본',
+        exportedAt: new Date().toISOString(),
+        settings: window.deepClone(state.settings),
+      };
+      const stamp = profile.exportedAt.slice(0, 10).replace(/-/g, '');
+      const safeName = String(profile.profileName || 'style')
+        .trim()
+        .replace(/[^\w\-가-힣]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'style';
+      const filename = `${safeName}_${stamp}.style.json`;
+      const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showToast('스타일 파일 내보내기 완료', 'success');
+    } catch {
+      showToast('스타일 파일 내보내기 실패', 'error');
+    }
+  };
+
+  const importStyleProfile = async (file) => {
+    try {
+      const raw = await file.text();
+      const json = JSON.parse(raw);
+      const imported = (json && typeof json === 'object' && json.settings && typeof json.settings === 'object')
+        ? json.settings
+        : json;
+      if (!imported || typeof imported !== 'object') {
+        throw new Error('invalid_profile');
+      }
+      const importedName = (json && typeof json === 'object' && typeof json.profileName === 'string')
+        ? json.profileName
+        : file.name.replace(/\.[^.]+$/, '');
+      const merged = mergeDeep(window.deepClone(window.defaultSettings), imported);
+      merged.styleProfileName = merged.styleProfileName || importedName || '불러온 스타일';
+      applySettings(merged);
+      renderSettingsPanel();
+      showToast('스타일 파일 불러오기 완료', 'success');
+    } catch {
+      showToast('스타일 파일 불러오기 실패', 'error');
+    }
+  };
+
   const renderSettingsPanel = () => {
     window.renderSettingsPanel(
       state.settings,
@@ -495,6 +558,8 @@ console.log('code block')
       {
         history: state.history,
         onRefreshHistory: () => loadHistory(true),
+        onExportStyle: exportStyleProfile,
+        onImportStyle: importStyleProfile,
       },
     );
     const convertBtn = document.getElementById('btn-convert-hwpx');

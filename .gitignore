@@ -1,0 +1,3 @@
+__pycache__/
+*.pyc
+conversion_history.json

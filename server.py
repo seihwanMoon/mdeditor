@@ -332,9 +332,12 @@ def _record_history(item: dict) -> None:
 
 class ConvertRequest(BaseModel):
     md_content: str
+    mode: str = "template_match"
+    html_content: str = ""
     template: str = "default.hwpx"
     filename: str = "document"
     metadata: dict = {}
+    style_profile: dict = {}
     assets: dict = {}
     settings: dict = {}
 
@@ -377,6 +380,8 @@ def convert_hwpx(req: ConvertRequest):
             raise HTTPException(status_code=404, detail=f"템플릿 없음: {req.template}")
 
         safe_name = Path(req.filename).stem or "document"
+        requested_mode = str(getattr(req, "mode", "template_match") or "template_match").strip().lower()
+        convert_mode = "style_priority" if requested_mode in {"style_priority", "mdedit_style", "style"} else "template_match"
         source_markdown = _inject_frontmatter(req.md_content, req.metadata)
         try:
             source_markdown = _inject_special_pages(source_markdown, req.metadata, req.settings)
@@ -418,20 +423,38 @@ def convert_hwpx(req: ConvertRequest):
                 cmd.extend(["-o", str(out_file)])
                 return subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
 
+            current_markdown = source_markdown
+            current_input = md_file
+            input_kind = "markdown"
+            yaml_recovered = False
+            yaml_disabled_retry = False
+            yaml_html_reader_retry = False
+            style_to_markdown_retry = False
+
             try:
-                current_markdown = source_markdown
-                current_input = md_file
+                if convert_mode == "style_priority" and str(getattr(req, "html_content", "") or "").strip():
+                    html_file = tmp / "input_preview.html"
+                    html_file.write_text(str(req.html_content), encoding="utf-8")
+                    current_input = html_file
+                    input_kind = "html"
                 result = run_convert(current_input, use_reference=bool(reference_doc_arg))
             except FileNotFoundError:
                 raise HTTPException(status_code=500, detail="HWPX 변환 CLI 실행 실패 (python/pypandoc-hwpx 경로 확인)")
             except subprocess.TimeoutExpired:
                 raise HTTPException(status_code=504, detail="변환 시간 초과 (120초)")
 
+            # 스타일 우선(HTML) 입력이 실패하면 markdown 변환 경로로 1회 자동 폴백.
+            if result.returncode != 0 and input_kind == "html":
+                style_to_markdown_retry = True
+                try:
+                    current_input = md_file
+                    input_kind = "markdown"
+                    result = run_convert(current_input, use_reference=bool(reference_doc_arg))
+                except subprocess.TimeoutExpired:
+                    raise HTTPException(status_code=504, detail="변환 시간 초과 (스타일 HTML->Markdown 폴백 재시도 포함, 120초)")
+
             # 사용자 입력 frontmatter가 깨져 있으면 strip 후 안전 frontmatter를 재주입해 1회 복구 시도.
-            yaml_recovered = False
-            yaml_disabled_retry = False
-            yaml_html_reader_retry = False
-            if result.returncode != 0:
+            if result.returncode != 0 and input_kind == "markdown":
                 err_text = result.stderr or result.stdout or ""
                 if "Error parsing YAML metadata" in err_text:
                     yaml_recovered = True
@@ -446,7 +469,7 @@ def convert_hwpx(req: ConvertRequest):
                         raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 복구 재시도 포함, 120초)")
 
             # YAML 복구 후에도 같은 오류면 metadata 블록 파싱을 완전히 회피하는 최종 재시도.
-            if result.returncode != 0:
+            if result.returncode != 0 and input_kind == "markdown":
                 err_text = result.stderr or result.stdout or ""
                 if "Error parsing YAML metadata" in err_text:
                     yaml_disabled_retry = True
@@ -460,7 +483,7 @@ def convert_hwpx(req: ConvertRequest):
                         raise HTTPException(status_code=504, detail="변환 시간 초과 (YAML 파싱 비활성화 재시도 포함, 120초)")
 
             # 그래도 YAML 오류면 markdown reader의 YAML 기능을 끈 상태로 HTML 경유 변환.
-            if result.returncode != 0:
+            if result.returncode != 0 and input_kind == "markdown":
                 err_text = result.stderr or result.stdout or ""
                 if "Error parsing YAML metadata" in err_text:
                     yaml_html_reader_retry = True
@@ -513,8 +536,10 @@ def convert_hwpx(req: ConvertRequest):
                 except Exception:
                     failed_dump = None
                 logger.error(
-                    "pandoc conversion failed: retried_without_template=%s yaml_recovered=%s yaml_disabled_retry=%s yaml_html_reader_retry=%s failed_input=%s detail=%s",
+                    "pandoc conversion failed: mode=%s retried_without_template=%s style_to_markdown_retry=%s yaml_recovered=%s yaml_disabled_retry=%s yaml_html_reader_retry=%s failed_input=%s detail=%s",
+                    convert_mode,
                     retried_without_template,
+                    style_to_markdown_retry,
                     yaml_recovered,
                     yaml_disabled_retry,
                     yaml_html_reader_retry,
@@ -542,6 +567,8 @@ def convert_hwpx(req: ConvertRequest):
                     "created_at": datetime.now().isoformat(timespec="seconds"),
                     "filename": f"{safe_name}.hwpx",
                     "template": template_path.name,
+                    "mode": convert_mode,
+                    "style_profile_name": str((req.style_profile or {}).get("profile_name") or ""),
                     "size_bytes": dest.stat().st_size if dest.exists() else None,
                     "title": str((req.metadata or {}).get("title") or ""),
                     "author": str((req.metadata or {}).get("author") or ""),

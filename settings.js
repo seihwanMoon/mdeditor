@@ -8,6 +8,8 @@ window.defaultSettings = {
   margin: { top: '15mm', right: '20mm', bottom: '15mm', left: '20mm' },
   tableStyle: 'hwp',
   headingStyle: 'default',
+  convertMode: 'template_match',
+  styleProfileName: '기본',
   pageBreakBeforeH1: false,
   pageBreakBeforeH2: false,
   pageBreakBeforeH3: false,
@@ -61,6 +63,8 @@ window.renderSettingsPanel = function renderSettingsPanel(
 ) {
   let historyItems = Array.isArray(options.history) ? options.history : [];
   const onRefreshHistory = typeof options.onRefreshHistory === 'function' ? options.onRefreshHistory : () => {};
+  const onExportStyle = typeof options.onExportStyle === 'function' ? options.onExportStyle : () => {};
+  const onImportStyle = typeof options.onImportStyle === 'function' ? options.onImportStyle : () => {};
   const slotOptions = `
     <option value="none">없음</option>
     <option value="title">제목</option>
@@ -140,10 +144,25 @@ window.renderSettingsPanel = function renderSettingsPanel(
     `, 'sec-header-footer')}
 
     ${section('📋 HWPX 템플릿', `
+      <label>변환 방식
+        <select id="set-convert-mode">
+          <option value="template_match">원본/템플릿 유사</option>
+          <option value="style_priority">mdedit 스타일 우선</option>
+        </select>
+      </label>
       <label>템플릿<select id="set-template"><option>서버 없음</option></select></label>
       <button id="btn-convert-hwpx" disabled>HWPX 변환</button>
       <p class="hint" id="template-server-hint">서버 상태 확인 중...</p>
     `, 'sec-template')}
+
+    ${section('🎨 스타일 프로필', `
+      <label>프로필 이름<input id="set-styleProfileName" type="text" placeholder="예: 제안서 기본"/></label>
+      <div class="preset-actions">
+        <button id="btn-style-export">스타일 파일 내보내기</button>
+        <button id="btn-style-import">스타일 파일 불러오기</button>
+      </div>
+      <input id="style-import-file" type="file" accept=".json" style="display:none;" />
+    `, 'sec-style-profile')}
 
     ${section('💾 프리셋', `
       <div class="preset-actions"><button id="btn-preset-save">현재 설정 저장</button></div>
@@ -180,6 +199,8 @@ window.renderSettingsPanel = function renderSettingsPanel(
   bindInput('set-textIndent', 'textIndent');
   bindInput('set-tableStyle', 'tableStyle');
   bindInput('set-headingStyle', 'headingStyle');
+  bindInput('set-convert-mode', 'convertMode');
+  bindInput('set-styleProfileName', 'styleProfileName');
   bindInput('set-margin-top', 'margin.top');
   bindInput('set-margin-right', 'margin.right');
   bindInput('set-margin-bottom', 'margin.bottom');
@@ -291,4 +312,20 @@ window.renderSettingsPanel = function renderSettingsPanel(
 
   renderHistoryList(historyItems);
   document.getElementById('btn-history-refresh').addEventListener('click', () => onRefreshHistory());
+
+  const styleExportBtn = document.getElementById('btn-style-export');
+  if (styleExportBtn) {
+    styleExportBtn.addEventListener('click', () => onExportStyle());
+  }
+  const styleImportBtn = document.getElementById('btn-style-import');
+  const styleImportFile = document.getElementById('style-import-file');
+  if (styleImportBtn && styleImportFile) {
+    styleImportBtn.addEventListener('click', () => styleImportFile.click());
+    styleImportFile.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      await onImportStyle(file);
+      styleImportFile.value = '';
+    });
+  }
 };
