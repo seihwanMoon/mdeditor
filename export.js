@@ -103,17 +103,39 @@ window.exportHTMLWeb = function exportHTMLWeb({ markdown, settings, filename, as
 };
 
 window.exportHTMLforHWP = function exportHTMLforHWP({ markdown, settings, filename, assets = {} }) {
-  const composed = window.composeDocumentHtml(markdown, settings, { assets, frontmatterMode: 'hwp' });
-  const styled = buildStyledHwpRoot(composed.htmlBody, settings, { replaceUnsupportedImages: true });
+  // HTML웹과 동일한 렌더 파이프라인을 사용해 프리셋/미리보기 스타일 차이를 그대로 반영한다.
+  const rendered = buildRenderedDocument(markdown, settings, assets, 'preview');
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(rendered.html, 'text/html');
 
-  const out = [
-    '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">',
-    '<html>',
-    '<head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"><title>HWP Export</title></head>',
-    `<body style="${styled.bodyStyle}">${styled.rootHtml}</body>`,
-    '</html>',
-  ].join('');
+  doc.querySelectorAll('script').forEach((n) => n.remove());
+  const body = doc.body;
+  if (body) {
+    body.querySelectorAll('img').forEach((el) => {
+      const src = String(el.getAttribute('src') || '');
+      if (src.startsWith('data:image/') || src.startsWith('asset://') || src.startsWith('blob:')) {
+        const holder = doc.createElement('p');
+        const alt = String(el.getAttribute('alt') || '이미지');
+        holder.textContent = `[이미지: ${alt}]`;
+        holder.setAttribute('style', 'margin:6pt 0;color:#444;');
+        el.replaceWith(holder);
+      }
+    });
+  }
 
+  let head = doc.head;
+  if (!head) {
+    head = doc.createElement('head');
+    doc.documentElement.insertBefore(head, doc.documentElement.firstChild);
+  }
+  if (!head.querySelector('meta[http-equiv="Content-Type"]')) {
+    const meta = doc.createElement('meta');
+    meta.setAttribute('http-equiv', 'Content-Type');
+    meta.setAttribute('content', 'text/html; charset=utf-8');
+    head.prepend(meta);
+  }
+
+  const out = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
   download(`${filenameBase(filename)}_hwp.html`, out, 'text/html;charset=utf-8');
 };
 
